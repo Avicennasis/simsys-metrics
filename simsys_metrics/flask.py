@@ -55,9 +55,12 @@ def install_flask(
             )
         return
 
-    # Set the extensions sentinel BEFORE side effects so a partial first
-    # install (subprocess timeout in build_info, etc.) doesn't leave the
-    # registry partially populated and re-entered on retry.
+    # Set the extensions sentinel BEFORE side effects so consumer code
+    # that races against install sees a consistent picture. If any of the
+    # side-effecting calls below raises, the sentinel is CLEARED in the
+    # except block — otherwise a transient failure (e.g. a `git rev-parse`
+    # subprocess timeout in build_info.py) would permanently mark the app
+    # as installed without actually wiring metrics, blocking retries.
     app.extensions["simsys_metrics"] = {
         "service": service,
         "version": version,
@@ -65,9 +68,15 @@ def install_flask(
         "installed": True,
     }
 
-    set_service(service)
-    register_process_collector(service)
-    register_build_info(service=service, version=version, commit=commit)
+    try:
+        set_service(service)
+        register_process_collector(service)
+        register_build_info(service=service, version=version, commit=commit)
+    except BaseException:
+        # Roll back the sentinel so a retry can attempt a fresh install.
+        # Caller still sees the original exception.
+        app.extensions.pop("simsys_metrics", None)
+        raise
 
     @app.before_request
     def _simsys_before():

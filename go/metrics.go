@@ -64,6 +64,20 @@ type Metrics struct {
 // the Metrics handle. Does not mount /metrics on any router — use
 // MetricsHandler() for that. Returns an error (does not panic) on
 // invalid options.
+//
+// Idempotent on the same Registry: a second Install with the same
+// opts.Registry will reuse the already-registered collectors rather than
+// panic on duplicate descriptors. The returned *Metrics still wraps the
+// same registry and is safe to use for emitting samples.
+//
+// CAUTION — re-Install with a DIFFERENT Service on the same Registry
+// produces inconsistent metric labels. Process metrics, HTTP histograms,
+// queue/job/progress collectors all keep emitting under the FIRST call's
+// service label (the existing collectors are reused), but the build_info
+// gauge is overwritten with the NEW Service value. Dashboards that join
+// build_info to the other simsys_* series via the service label will
+// stop matching. Use one Service per Registry; allocate a fresh Registry
+// when you legitimately need to re-init under a new service identity.
 func Install(opts InstallOpts) (*Metrics, error) {
 	if opts.Service == "" || opts.Version == "" {
 		return nil, ErrInvalidInstallOpts

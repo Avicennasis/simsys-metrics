@@ -45,7 +45,7 @@ The Node package ships as a tarball attached to each `node-v*` GitHub Release. P
 ```json
 {
   "dependencies": {
-    "@simsys/metrics": "https://github.com/Avicennasis/simsys-metrics/releases/download/node-v0.1.0/simsys-metrics-0.1.0.tgz"
+    "@simsys/metrics": "https://github.com/Avicennasis/simsys-metrics/releases/download/node-v0.3.2/simsys-metrics-0.3.2.tgz"
   }
 }
 ```

@@ -83,25 +83,38 @@ def install_fastapi(
 
     multiproc_dir = os.environ.get("PROMETHEUS_MULTIPROC_DIR")
 
-    # Set the sentinel BEFORE side effects so a partial first install (e.g.
-    # register_build_info raises mid-way) doesn't leave the registry partially
-    # populated AND let a retry re-run the full registration. Process collector
-    # registration is locked-singleton-safe and build_info is set-idempotent,
-    # so re-entering after a transient error is benign — but we want exactly
-    # one effective install per app, not "however many retries it took."
+    # Set the sentinel BEFORE side effects so consumer code that races
+    # against install (e.g. an upstream auth middleware reading the exempt
+    # path set during startup) sees a consistent picture. If any of the
+    # side-effecting calls below raises, the sentinel is CLEARED in the
+    # except block — otherwise a transient failure (e.g. a `git rev-parse`
+    # subprocess timeout in build_info.py) would permanently mark the app
+    # as installed without actually wiring metrics, blocking retries.
     app.state.simsys_service = service
     app.state.simsys_version = version
     app.state.simsys_exempt_paths = EXEMPT_PATHS
     app.state.simsys_metrics_installed = True
 
-    set_service(service)
-    # Skip the custom SimsysProcessCollector in multiproc mode: it reads the
-    # current process's /proc stats only, so summing those across workers
-    # would be meaningless. Per-process CPU/RSS/FDs gauges are a known
-    # limitation of multiproc mode.
-    if not multiproc_dir:
-        register_process_collector(service)
-    register_build_info(service=service, version=version, commit=commit)
+    try:
+        set_service(service)
+        # Skip the custom SimsysProcessCollector in multiproc mode: it reads
+        # the current process's /proc stats only, so summing those across
+        # workers would be meaningless. Per-process CPU/RSS/FDs gauges are a
+        # known limitation of multiproc mode.
+        if not multiproc_dir:
+            register_process_collector(service)
+        register_build_info(service=service, version=version, commit=commit)
+    except BaseException:
+        # Roll back the sentinel + state attributes so a retry can attempt
+        # a fresh install. Caller still sees the original exception.
+        app.state.simsys_metrics_installed = False
+        if hasattr(app.state, "simsys_service"):
+            del app.state.simsys_service
+        if hasattr(app.state, "simsys_version"):
+            del app.state.simsys_version
+        if hasattr(app.state, "simsys_exempt_paths"):
+            del app.state.simsys_exempt_paths
+        raise
 
     @app.middleware("http")
     async def _simsys_http_metrics(request: Request, call_next):

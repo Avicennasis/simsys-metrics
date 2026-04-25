@@ -23,7 +23,7 @@ from ._baseline import set_service, track_job, track_queue
 from .helpers import safe_label
 from .progress import ProgressOpts, ProgressTracker, track_progress
 
-__version__ = "0.3.1"
+__version__ = "0.3.2"
 
 __all__ = [
     "install",

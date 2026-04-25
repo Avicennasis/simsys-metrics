@@ -5,6 +5,22 @@ All notable changes to `simsys-metrics-go` will be documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [go/v0.2.2] - 2026-04-25
+
+### Added
+- Test coverage: `TestInstallIdempotentProcCollectorReused` directly
+  asserts that the simsysProcessCollector survives a second `Install`
+  with the same Registry and continues to emit `simsys_process_*` on
+  scrape — closing a coverage gap from v0.2.1's orphan fix.
+
+### Documentation
+- `Install` godoc now explicitly warns that re-Install with a different
+  `Service` on the same Registry produces inconsistent labels (the
+  build_info gauge gets the new Service value, but the existing
+  collectors keep emitting the original one). Use one Service per
+  Registry; allocate a fresh Registry to legitimately re-init under a
+  new identity.
+
 ## [go/v0.2.1] - 2026-04-25
 
 ### Fixed
@@ -43,5 +59,6 @@ notes:
 - `TrackQueue` panic recovery: a `depthFn` panic logs the first occurrence
   via `slog` and silently absorbs subsequent panics to avoid log floods.
 
+[go/v0.2.2]: https://github.com/Avicennasis/simsys-metrics/releases/tag/go/v0.2.2
 [go/v0.2.1]: https://github.com/Avicennasis/simsys-metrics/releases/tag/go/v0.2.1
 [go/v0.2.0]: https://github.com/Avicennasis/simsys-metrics/releases/tag/go/v0.2.0

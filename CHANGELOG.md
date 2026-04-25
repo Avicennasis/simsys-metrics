@@ -5,6 +5,39 @@ All notable changes to `simsys-metrics` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] — 2026-04-25
+
+Patch release closing a regression in v0.3.1's install-sentinel ordering
+and adding regression-test coverage for two paths that were previously
+implicit.
+
+### Fixed
+- **`install()` no longer phantom-installs on partial failure.** v0.3.1
+  moved the sentinel ahead of the side-effecting registration calls; if
+  any of them raised (e.g. transient `subprocess.TimeoutExpired` in
+  `git rev-parse`), the sentinel was left set and subsequent retry calls
+  returned early — silently dropping the install. The sentinel is now
+  rolled back inside an `except` block so a retry can proceed cleanly.
+  Backed by `tests/test_install_partial_failure.py` (FastAPI + Flask).
+
+### Added (test coverage only)
+- `test_flask_unhandled_exception_count_is_exactly_one` — symmetry with
+  the double-count test for the no-handler 5xx path.
+- `test_flask_before_request_exception_records_5xx` — verifies the
+  exception-from-`before_request` path still records the route + 5xx.
+- `test_flask_before_request_failure_before_simsys_skips_histogram` —
+  pins the contract that when a user's `before_request` runs (and fails)
+  ahead of `_simsys_before`, the counter still increments but the
+  histogram observe is skipped (no 0.0-bucket pollution).
+
+### Documentation
+- `go/metrics.go` — `Install` godoc now warns that re-Install with a
+  different Service on the same Registry produces inconsistent labels
+  (build_info gauge gets the new Service; everything else keeps the
+  original).
+- `node/README.md` — Install snippet bumped from the stale
+  `node-v0.1.0` tarball URL to `node-v0.3.2`.
+
 ## [0.3.1] — 2026-04-25
 
 Patch release tightening `install()` semantics and Flask error-path
@@ -70,5 +103,6 @@ First public release.
 - pre-commit with ruff (lint + format).
 - OpenSSF Scorecard, build provenance attestation on Go releases.
 
+[0.3.2]: https://github.com/Avicennasis/simsys-metrics/releases/tag/v0.3.2
 [0.3.1]: https://github.com/Avicennasis/simsys-metrics/releases/tag/v0.3.1
 [0.3.0]: https://github.com/Avicennasis/simsys-metrics/releases/tag/v0.3.0
