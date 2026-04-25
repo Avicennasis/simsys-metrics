@@ -42,6 +42,14 @@ export function trackQueue(
 ): NodeJS.Timeout {
   const service = getService();
   const intervalMs = opts.intervalMs ?? 5000;
+  // Reject intervalMs <= 0: setInterval(..., 0) creates a hot loop that
+  // pegs the event loop. Be loud about misconfig instead of silently
+  // melting the worker.
+  if (typeof intervalMs !== "number" || !Number.isFinite(intervalMs) || intervalMs <= 0) {
+    throw new Error(
+      `trackQueue: opts.intervalMs must be a positive finite number of milliseconds, got ${String(intervalMs)}`,
+    );
+  }
 
   const tick = async () => {
     let depth = 0;

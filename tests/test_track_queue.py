@@ -48,3 +48,17 @@ def test_track_queue_swallows_depth_fn_exception():
     assert v == 0
     # And the poller kept running (didn't crash after the first raise).
     assert counter[0] >= 2
+
+
+def test_track_queue_rejects_zero_interval():
+    """interval=0 would create a busy-loop in an unstoppable daemon thread.
+    track_queue must reject it loudly at call time."""
+    set_service("queue_test_svc")
+    with pytest.raises(ValueError, match="positive number"):
+        track_queue("zero_interval", depth_fn=lambda: 1, interval=0)
+
+
+def test_track_queue_rejects_negative_interval():
+    set_service("queue_test_svc")
+    with pytest.raises(ValueError, match="positive number"):
+        track_queue("neg_interval", depth_fn=lambda: 1, interval=-1.0)

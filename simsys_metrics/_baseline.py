@@ -82,7 +82,17 @@ def track_queue(
     """Poll ``depth_fn()`` every ``interval`` seconds and update the gauge.
 
     Returns the poller thread (daemon). Safe to ignore the return value.
+
+    ``interval`` must be > 0; ``interval=0`` would create a busy-loop that
+    cannot be stopped from the calling thread (the daemon dies with the
+    interpreter, but burns CPU until then). ``ValueError`` is raised at
+    call time so the misconfig is loud, not silent.
     """
+    if not isinstance(interval, (int, float)) or interval <= 0:
+        raise ValueError(
+            f"track_queue: interval must be a positive number of seconds, "
+            f"got {interval!r}"
+        )
     service = get_service()
 
     seen_failure = False  # log misbehaving callbacks once, not every tick

@@ -16,16 +16,29 @@ import time
 from typing import Optional
 
 from ._baseline import set_service
-from ._http import http_request_duration_seconds, http_requests_total, status_bucket
+from ._http import (
+    http_request_duration_seconds,
+    http_requests_total,
+    normalize_method,
+    status_bucket,
+)
 from ._process import register_process_collector
 from .build_info import register_build_info
 
 _log = logging.getLogger("simsys_metrics")
 
-# Auth middleware on host apps can read this attribute on the app to decide
-# what to skip. Declaring it here lets consumers discover it without importing
-# a private helper.
-EXEMPT_PATHS = frozenset({"/metrics", "/health", "/ready", "/healthz"})
+# Default exempt paths. Auth middleware on host apps can read
+# `app.state.simsys_exempt_paths` to skip these without hard-coding the
+# list. The actual set is built per-install so the user-supplied
+# `metrics_path` (if non-default) is included — see _build_exempt_paths.
+_DEFAULT_HEALTH_PATHS = frozenset({"/health", "/ready", "/healthz"})
+EXEMPT_PATHS = frozenset({"/metrics"}) | _DEFAULT_HEALTH_PATHS
+
+
+def _build_exempt_paths(metrics_path: str) -> frozenset[str]:
+    """Return the auth-exempt path set for an install, including the
+    user-supplied metrics_path if it differs from the default."""
+    return frozenset({metrics_path}) | _DEFAULT_HEALTH_PATHS
 
 
 def install_fastapi(
@@ -93,7 +106,7 @@ def install_fastapi(
     # as installed without actually wiring metrics, blocking retries.
     app.state.simsys_service = service
     app.state.simsys_version = version
-    app.state.simsys_exempt_paths = EXEMPT_PATHS
+    app.state.simsys_exempt_paths = _build_exempt_paths(metrics_path)
     app.state.simsys_metrics_installed = True
 
     try:
@@ -105,9 +118,79 @@ def install_fastapi(
         if not multiproc_dir:
             register_process_collector(service)
         register_build_info(service=service, version=version, commit=commit)
+
+        # Use a BaseHTTPMiddleware subclass via app.add_middleware() rather
+        # than the function-style @app.middleware("http") decorator. The
+        # decorator form is known to deadlock with
+        # starlette.testclient.TestClient under recent Starlette versions
+        # (0.51+); BaseHTTPMiddleware is the canonical, testable pattern.
+        #
+        # add_middleware raises RuntimeError if the app has already started
+        # serving requests ("Cannot add middleware after an application has
+        # started"). The except block below catches this so a late-install
+        # failure is recoverable on retry rather than leaving the app
+        # marked installed without metrics actually wired.
+        class _SimsysHTTPMetrics(BaseHTTPMiddleware):
+            async def dispatch(self, request: Request, call_next):
+                if request.url.path == metrics_path:
+                    return await call_next(request)
+                start = time.perf_counter()
+                status_code = 500  # default until call_next returns a Response
+                try:
+                    response = await call_next(request)
+                    status_code = response.status_code
+                    return response
+                finally:
+                    elapsed = time.perf_counter() - start
+                    route_obj = request.scope.get("route")
+                    route = getattr(route_obj, "path", None) or "__unmatched__"
+                    method = normalize_method(request.method)
+                    http_requests_total.labels(
+                        service=service,
+                        method=method,
+                        route=route,
+                        status=status_bucket(status_code),
+                    ).inc()
+                    http_request_duration_seconds.labels(
+                        service=service,
+                        method=method,
+                        route=route,
+                    ).observe(elapsed)
+
+        app.add_middleware(_SimsysHTTPMetrics)
+
+        if multiproc_dir:
+            # Multiproc mode: fresh registry + MultiProcessCollector, mount
+            # /metrics as a plain route. Instrumentator.expose() reads from
+            # the default REGISTRY only, so we skip it here.
+            from prometheus_client import (
+                CONTENT_TYPE_LATEST,
+                CollectorRegistry,
+                generate_latest,
+            )
+            from prometheus_client.multiprocess import MultiProcessCollector
+
+            multiproc_registry = CollectorRegistry()
+            MultiProcessCollector(multiproc_registry)
+
+            @app.get(metrics_path, include_in_schema=False)
+            def _simsys_metrics_multiproc() -> Response:
+                return Response(
+                    content=generate_latest(multiproc_registry),
+                    media_type=CONTENT_TYPE_LATEST,
+                )
+        else:
+            Instrumentator(
+                should_group_status_codes=True,
+                should_ignore_untemplated=True,
+                excluded_handlers=[metrics_path],
+            ).expose(app, endpoint=metrics_path, include_in_schema=False)
     except BaseException:
         # Roll back the sentinel + state attributes so a retry can attempt
-        # a fresh install. Caller still sees the original exception.
+        # a fresh install. Caller still sees the original exception. Covers
+        # ALL framework wiring failures (add_middleware after startup,
+        # Instrumentator.expose collisions, route registration on a frozen
+        # app, etc.) — not just the registry/build-info phase.
         app.state.simsys_metrics_installed = False
         if hasattr(app.state, "simsys_service"):
             del app.state.simsys_service
@@ -116,71 +199,3 @@ def install_fastapi(
         if hasattr(app.state, "simsys_exempt_paths"):
             del app.state.simsys_exempt_paths
         raise
-
-    # Use a BaseHTTPMiddleware subclass via app.add_middleware() rather than
-    # the function-style @app.middleware("http") decorator. The decorator
-    # form is known to deadlock with starlette.testclient.TestClient under
-    # recent Starlette versions (0.51+); BaseHTTPMiddleware is the
-    # canonical, testable pattern.
-    class _SimsysHTTPMetrics(BaseHTTPMiddleware):
-        async def dispatch(self, request: Request, call_next):
-            if request.url.path == metrics_path:
-                return await call_next(request)
-            start = time.perf_counter()
-            status_code = 500  # default until call_next returns a Response
-            try:
-                response = await call_next(request)
-                status_code = response.status_code
-                return response
-            finally:
-                elapsed = time.perf_counter() - start
-                # Route-template resolution: FastAPI stamps the matched
-                # route onto request.scope["route"]; its .path is the
-                # template (e.g. /items/{id}). When no route matched (404,
-                # OPTIONS pre-flight, exception path), fall back to a
-                # single bucket label so cardinality stays bounded.
-                route_obj = request.scope.get("route")
-                route = getattr(route_obj, "path", None) or "__unmatched__"
-                method = request.method
-                http_requests_total.labels(
-                    service=service,
-                    method=method,
-                    route=route,
-                    status=status_bucket(status_code),
-                ).inc()
-                http_request_duration_seconds.labels(
-                    service=service,
-                    method=method,
-                    route=route,
-                ).observe(elapsed)
-
-    app.add_middleware(_SimsysHTTPMetrics)
-
-    if multiproc_dir:
-        # Multiproc mode: build a fresh registry, attach MultiProcessCollector
-        # to aggregate samples across all processes writing into
-        # $PROMETHEUS_MULTIPROC_DIR, and mount /metrics as a plain route.
-        # Instrumentator.expose() reads from the default REGISTRY and offers
-        # no registry= override, so we skip it entirely here.
-        from prometheus_client import (
-            CONTENT_TYPE_LATEST,
-            CollectorRegistry,
-            generate_latest,
-        )
-        from prometheus_client.multiprocess import MultiProcessCollector
-
-        multiproc_registry = CollectorRegistry()
-        MultiProcessCollector(multiproc_registry)
-
-        @app.get(metrics_path, include_in_schema=False)
-        def _simsys_metrics_multiproc() -> Response:
-            return Response(
-                content=generate_latest(multiproc_registry),
-                media_type=CONTENT_TYPE_LATEST,
-            )
-    else:
-        Instrumentator(
-            should_group_status_codes=True,
-            should_ignore_untemplated=True,
-            excluded_handlers=[metrics_path],
-        ).expose(app, endpoint=metrics_path, include_in_schema=False)

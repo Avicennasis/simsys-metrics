@@ -98,6 +98,28 @@ export function statusBucket(statusCode: number | string): string {
   return "5xx";
 }
 
+// Allow-list of HTTP methods that get their own series. Anything outside
+// this set (case-insensitive) collapses to "OTHER" so attacker-controlled
+// garbage methods (e.g. "X_AUDIT_1", "ASDF") cannot blow out the label
+// space. Includes RFC 9110 standard methods plus PATCH (RFC 5789).
+const ALLOWED_METHODS: ReadonlySet<string> = new Set([
+  "GET",
+  "HEAD",
+  "POST",
+  "PUT",
+  "DELETE",
+  "CONNECT",
+  "OPTIONS",
+  "TRACE",
+  "PATCH",
+]);
+
+export function normalizeMethod(method: unknown): string {
+  if (typeof method !== "string") return "OTHER";
+  const upper = method.toUpperCase();
+  return ALLOWED_METHODS.has(upper) ? upper : "OTHER";
+}
+
 // -------- Build info --------
 
 export const buildInfo = makeGauge(

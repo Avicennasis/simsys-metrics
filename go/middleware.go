@@ -45,11 +45,12 @@ func recordRequest(m *Metrics, r *http.Request, extractor RouteExtractor, status
 			route = tmpl
 		}
 	}
+	method := NormalizeMethod(r.Method)
 	m.httpRequestsTotal.WithLabelValues(
-		m.service, r.Method, route, StatusBucket(status),
+		m.service, method, route, StatusBucket(status),
 	).Inc()
 	m.httpRequestDurationSeconds.WithLabelValues(
-		m.service, r.Method, route,
+		m.service, method, route,
 	).Observe(elapsed)
 }
 

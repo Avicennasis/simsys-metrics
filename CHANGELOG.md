@@ -5,6 +5,48 @@ All notable changes to `simsys-metrics` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.6] — 2026-04-25
+
+Patch release closing six findings from a follow-up Codex audit (two
+HIGH, three MEDIUM, one LOW).
+
+### Fixed
+- **HTTP method label is now bounded** (HIGH). Pre-fix, the raw
+  `request.method` string was passed straight through, so a hostile
+  client sending arbitrary methods (`X_AUDIT_1`, `ASDF`, etc.) forced
+  one new `simsys_http_requests_total` series per distinct value —
+  defeating the package's stated cardinality discipline. Both FastAPI
+  and Flask now route the method through `normalize_method()` which
+  returns the upper-cased value if it's in the RFC 9110 + PATCH
+  allow-list, else `"OTHER"`. Backed by
+  `tests/test_method_normalization.py` (FastAPI + Flask end-to-end).
+- **`install()` rollback now covers the full framework-wiring phase**
+  (HIGH). Pre-fix the try/except only wrapped the registry/build-info
+  setup, so a late install (after the app started serving) where
+  FastAPI's `app.add_middleware` or Flask's `before_request` /
+  `add_url_rule` raised would leave the sentinel set without metrics
+  actually wired — and the idempotent guard would silently swallow
+  every retry. The framework wiring is now inside the protected block;
+  failures roll back the sentinel cleanly. Backed by two new
+  regression tests using `monkeypatch` to force late-install errors.
+- **Custom `metrics_path` now appears in the exempt-paths set** (MED).
+  When a user passed `metrics_path="/internal/metrics"`, the exposed
+  set (`app.state.simsys_exempt_paths` / `app.extensions[...]`) still
+  said `/metrics`, so auth middleware reading it would still
+  auth-block the actual scrape route. The set is now built per-install
+  to include the user's path.
+- **`track_queue` now rejects non-positive intervals** (MED). Pre-fix,
+  `interval=0` would create a busy-loop in an unstoppable daemon
+  thread (the daemon dies with the interpreter, but burns CPU until
+  then). Raises `ValueError` at call time instead.
+
+### Documentation
+- Multiprocess mode README section now clearly marks itself as
+  **FastAPI only** and documents that Flask under gunicorn does NOT
+  have automatic multiproc handling — the previous wording implied
+  framework parity. Native Flask multiproc support is tracked for a
+  future minor release.
+
 ## [0.3.5] — 2026-04-25
 
 Patch release addressing nine findings from a follow-up audit (four
@@ -191,6 +233,7 @@ First public release.
 - pre-commit with ruff (lint + format).
 - OpenSSF Scorecard, build provenance attestation on Go releases.
 
+[0.3.6]: https://github.com/Avicennasis/simsys-metrics/releases/tag/v0.3.6
 [0.3.5]: https://github.com/Avicennasis/simsys-metrics/releases/tag/v0.3.5
 [0.3.4]: https://github.com/Avicennasis/simsys-metrics/releases/tag/v0.3.4
 [0.3.3]: https://github.com/Avicennasis/simsys-metrics/releases/tag/v0.3.3

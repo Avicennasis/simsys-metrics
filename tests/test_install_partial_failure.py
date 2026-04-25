@@ -86,3 +86,79 @@ def test_flask_install_failure_clears_sentinel(monkeypatch):
     assert app.extensions["simsys_metrics"]["installed"] is True
     assert app.extensions["simsys_metrics"]["service"] == "partial_flask"
     assert call_count["n"] == 2
+
+
+def test_fastapi_install_late_addmiddleware_failure_clears_sentinel(monkeypatch):
+    """If app.add_middleware fails (e.g., the app has already started
+    serving requests), the rollback must extend to the framework-wiring
+    phase — not just the registry/build-info phase. Otherwise a retry
+    would no-op on the sentinel and never wire metrics.
+    """
+    from fastapi import FastAPI
+
+    from simsys_metrics import install
+
+    app = FastAPI()
+
+    # Force add_middleware to raise the same RuntimeError Starlette raises
+    # when middleware is added after startup.
+    real_add_middleware = app.add_middleware
+    call_count = {"n": 0}
+
+    def flaky_add_middleware(*args, **kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            raise RuntimeError("Cannot add middleware after an application has started")
+        return real_add_middleware(*args, **kwargs)
+
+    monkeypatch.setattr(app, "add_middleware", flaky_add_middleware)
+
+    with pytest.raises(RuntimeError, match="after an application has started"):
+        install(app, service="late_fastapi", version="0.0.1")
+
+    # Sentinel must be cleared so a retry can proceed.
+    assert getattr(app.state, "simsys_metrics_installed", False) is False, (
+        "sentinel must be cleared when add_middleware fails post-startup"
+    )
+
+    # Retry succeeds.
+    install(app, service="late_fastapi", version="0.0.1")
+    assert app.state.simsys_metrics_installed is True
+    assert call_count["n"] == 2
+
+
+def test_flask_install_late_route_failure_clears_sentinel(monkeypatch):
+    """If a Flask hook registration fails late (e.g., app.route on an
+    already-running server), the sentinel must roll back."""
+    from flask import Flask
+
+    from simsys_metrics import install
+
+    app = Flask("flask_late_app")
+
+    # Force the @app.route decorator to fail on the first call.
+    real_add_url_rule = app.add_url_rule
+    call_count = {"n": 0}
+
+    def flaky_add_url_rule(*args, **kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            raise AssertionError(
+                "The setup method 'add_url_rule' can no longer be called "
+                "on the application. It has already handled its first "
+                "request, any changes will not be applied consistently."
+            )
+        return real_add_url_rule(*args, **kwargs)
+
+    monkeypatch.setattr(app, "add_url_rule", flaky_add_url_rule)
+
+    with pytest.raises(AssertionError, match="add_url_rule"):
+        install(app, service="late_flask", version="0.0.1")
+
+    assert "simsys_metrics" not in app.extensions, (
+        "extensions entry must be cleared when route registration fails"
+    )
+
+    install(app, service="late_flask", version="0.0.1")
+    assert app.extensions["simsys_metrics"]["installed"] is True
+    assert call_count["n"] == 2

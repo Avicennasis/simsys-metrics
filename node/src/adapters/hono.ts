@@ -9,6 +9,7 @@
 import {
   httpRequestsTotal,
   httpRequestDurationSeconds,
+  normalizeMethod,
   statusBucket,
   buildInfo,
   registry,
@@ -30,12 +31,18 @@ export interface HonoInstallOpts {
   metricsPath?: string;
 }
 
+// Default exempt paths. The actual per-install set built below also
+// includes the user-supplied metricsPath if it differs from /metrics.
+const DEFAULT_HEALTH_PATHS: readonly string[] = ["/health", "/ready", "/healthz"];
+
 export const EXEMPT_PATHS: ReadonlySet<string> = new Set([
   "/metrics",
-  "/health",
-  "/ready",
-  "/healthz",
+  ...DEFAULT_HEALTH_PATHS,
 ]);
+
+function buildExemptPaths(metricsPath: string): ReadonlySet<string> {
+  return new Set([metricsPath, ...DEFAULT_HEALTH_PATHS]);
+}
 
 export function installHono(app: HonoLike, opts: HonoInstallOpts): HonoLike {
   const { service, version } = opts;
@@ -82,7 +89,7 @@ export function installHono(app: HonoLike, opts: HonoInstallOpts): HonoLike {
   // doesn't have per-app `locals`, but it does have context.set on each
   // request. For discovery we attach it to a symbol-keyed property on the app
   // instance itself.
-  appProps.simsysExemptPaths = EXEMPT_PATHS;
+  appProps.simsysExemptPaths = buildExemptPaths(metricsPath);
   appProps.simsysService = service;
   appProps.simsysVersion = version;
   appProps.simsysMetricsInstalled = true;
@@ -99,7 +106,7 @@ export function installHono(app: HonoLike, opts: HonoInstallOpts): HonoLike {
       await next();
     } finally {
       const elapsed = Number(process.hrtime.bigint() - start) / 1e9;
-      const method = c.req.method;
+      const method = normalizeMethod(c.req.method);
       // Hono 4+: routePath is the template ("/items/:id"). When no real route
       // handler matched, Hono reports the *middleware's own* pattern ("/*" or
       // "*") as the routePath — those values must collapse into the unmatched

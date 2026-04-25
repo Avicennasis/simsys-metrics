@@ -11,6 +11,7 @@
 import {
   httpRequestsTotal,
   httpRequestDurationSeconds,
+  normalizeMethod,
   statusBucket,
   buildInfo,
   registry,
@@ -32,12 +33,18 @@ export interface ExpressInstallOpts {
   metricsPath?: string;
 }
 
+// Default exempt paths. The actual per-install set built below also
+// includes the user-supplied metricsPath if it differs from /metrics.
+const DEFAULT_HEALTH_PATHS: readonly string[] = ["/health", "/ready", "/healthz"];
+
 export const EXEMPT_PATHS: ReadonlySet<string> = new Set([
   "/metrics",
-  "/health",
-  "/ready",
-  "/healthz",
+  ...DEFAULT_HEALTH_PATHS,
 ]);
+
+function buildExemptPaths(metricsPath: string): ReadonlySet<string> {
+  return new Set([metricsPath, ...DEFAULT_HEALTH_PATHS]);
+}
 
 export function installExpress(
   app: ExpressLike,
@@ -82,8 +89,9 @@ export function installExpress(
     .set(1);
 
   // Expose the exempt-path set so upstream auth middleware can skip them
-  // without hard-coding the list.
-  app.locals.simsysExemptPaths = EXEMPT_PATHS;
+  // without hard-coding the list. Includes the user-supplied metricsPath
+  // when it differs from the default /metrics.
+  app.locals.simsysExemptPaths = buildExemptPaths(metricsPath);
   app.locals.simsysService = service;
   app.locals.simsysVersion = version;
   app.locals.simsysMetricsInstalled = true;
@@ -106,7 +114,7 @@ export function installExpress(
       res.removeListener("finish", finalize);
       res.removeListener("close", finalize);
       const elapsed = Number(process.hrtime.bigint() - start) / 1e9;
-      const method = req.method;
+      const method = normalizeMethod(req.method);
       // In Express 5, req.route is populated after a matching route handler
       // runs. For middleware-only paths or 404s it's undefined; we collapse
       // those into a single "__unmatched__" bucket to keep cardinality bounded.

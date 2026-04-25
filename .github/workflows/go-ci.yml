@@ -20,8 +20,10 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
+      # go.mod declares `go 1.25` — pinned by github.com/prometheus/procfs
+      # v0.20+. Test on the floor + the latest minor.
       matrix:
-        go-version: ["1.23.x", "1.24.x"]
+        go-version: ["1.25.x", "1.26.x"]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
@@ -54,7 +56,9 @@ jobs:
 
       - uses: actions/setup-go@3041bf56c941b39c61721a86cd11f3bb1338122a # v5.2.0
         with:
-          go-version: "1.24.x"
+          # Match go.mod's declared minimum (1.25); see comment on the
+          # test job's matrix above.
+          go-version: "1.25.x"
           cache-dependency-path: go/go.sum
 
       - name: Install staticcheck

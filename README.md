@@ -26,9 +26,9 @@ Grafana dashboard works across every runtime:
 
 | Package | Path | Languages | Tag prefix | Install |
 |---------|------|-----------|------------|---------|
-| `simsys-metrics` (Python) | `/` (root) | FastAPI, Flask | `v<semver>` (e.g. `v0.3.5`) | `pip install ... @ git+https://...@v0.3.5` |
-| [`@simsys/metrics` (Node)](node/) | `node/` | Express 5, Bun + Hono | `node-v<semver>` (e.g. `node-v0.3.5`) | GitHub Release tarball URL |
-| [`simsys-metrics-go`](go/) | `go/` | net/http | `go/v<semver>` (e.g. `go/v0.2.5`) | `go get ...@v0.2.5` |
+| `simsys-metrics` (Python) | `/` (root) | FastAPI, Flask | `v<semver>` (e.g. `v0.3.6`) | `pip install ... @ git+https://...@v0.3.6` |
+| [`@simsys/metrics` (Node)](node/) | `node/` | Express 5, Bun + Hono | `node-v<semver>` (e.g. `node-v0.3.6`) | GitHub Release tarball URL |
+| [`simsys-metrics-go`](go/) | `go/` | net/http | `go/v<semver>` (e.g. `go/v0.2.6`) | `go get ...@v0.2.6` |
 
 The Python package remains at the repo root for pip git-install compatibility. The Node and Go packages live under [`node/`](node/) and [`go/`](go/) respectively — see each subdirectory's README for install details.
 
@@ -66,10 +66,10 @@ up automatically.
 
 ```bash
 # FastAPI service
-pip install "simsys-metrics[fastapi] @ git+https://github.com/Avicennasis/simsys-metrics.git@v0.3.5"
+pip install "simsys-metrics[fastapi] @ git+https://github.com/Avicennasis/simsys-metrics.git@v0.3.6"
 
 # Flask service
-pip install "simsys-metrics[flask] @ git+https://github.com/Avicennasis/simsys-metrics.git@v0.3.5"
+pip install "simsys-metrics[flask] @ git+https://github.com/Avicennasis/simsys-metrics.git@v0.3.6"
 ```
 
 Pin to the tag. Bumping a consumer means re-pointing this URL at a newer tag.
@@ -78,7 +78,7 @@ Pin to the tag. Bumping a consumer means re-pointing this URL at a newer tag.
 <summary>Pinning in <code>requirements.txt</code></summary>
 
 ```
-simsys-metrics[fastapi] @ git+https://github.com/Avicennasis/simsys-metrics.git@v0.3.5
+simsys-metrics[fastapi] @ git+https://github.com/Avicennasis/simsys-metrics.git@v0.3.6
 ```
 
 Works in plain Docker builds — no SSH agent, no auth tokens required.
@@ -247,13 +247,23 @@ ENV SIMSYS_BUILD_COMMIT=${GIT_COMMIT}
 
 and build with `docker build --build-arg GIT_COMMIT=$(git rev-parse --short HEAD) .`.
 
-## Multiprocess mode
+## Multiprocess mode (FastAPI only)
 
-When running under gunicorn/uvicorn-with-workers, set
-`PROMETHEUS_MULTIPROC_DIR` so the worker processes write metric samples to
-a shared directory and `/metrics` aggregates them via
-`prometheus_client.MultiProcessCollector`. With the env var set,
-`install()` automatically:
+> **Scope:** the multiproc support described here is currently **FastAPI
+> only**. The Flask installer does not have multiproc support — when run
+> under gunicorn workers it still registers the per-process
+> `simsys_process_*` collector and serves `/metrics` from
+> `prometheus_client`'s default registry, so per-worker metrics will not
+> aggregate. If you need multiproc-correct metrics under Flask + gunicorn
+> today, mount `prometheus_client.make_wsgi_app(MultiProcessCollector(...))`
+> at `/metrics` yourself and skip `install()`'s `/metrics` route. Native
+> Flask multiproc support is tracked for a future minor release.
+
+When running FastAPI under uvicorn-with-workers (or gunicorn + uvicorn
+worker class), set `PROMETHEUS_MULTIPROC_DIR` so the worker processes
+write metric samples to a shared directory and `/metrics` aggregates
+them via `prometheus_client.MultiProcessCollector`. With the env var
+set, `install()` on a FastAPI app automatically:
 
 - Mounts a multiproc-aware `/metrics` route that walks the shared directory
   on every scrape.

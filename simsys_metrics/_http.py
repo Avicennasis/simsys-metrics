@@ -37,3 +37,34 @@ def status_bucket(status_code: int | str) -> str:
     if 400 <= code < 500:
         return "4xx"
     return "5xx"
+
+
+# Allow-list of HTTP methods that get their own series. Anything outside
+# this set (case-insensitive) collapses to ``OTHER`` so attacker-controlled
+# garbage methods (e.g. ``X_AUDIT_1``, ``ASDF``) cannot blow out the label
+# space. Includes all RFC 9110 standard methods plus PATCH (RFC 5789).
+_ALLOWED_METHODS = frozenset(
+    {
+        "GET",
+        "HEAD",
+        "POST",
+        "PUT",
+        "DELETE",
+        "CONNECT",
+        "OPTIONS",
+        "TRACE",
+        "PATCH",
+    }
+)
+
+
+def normalize_method(method: object) -> str:
+    """Coerce a request method into a bounded label value.
+
+    Returns the method upper-cased if it is in the standard allow-list,
+    else ``OTHER``. Non-string inputs also return ``OTHER`` defensively.
+    """
+    if not isinstance(method, str):
+        return "OTHER"
+    upper = method.upper()
+    return upper if upper in _ALLOWED_METHODS else "OTHER"

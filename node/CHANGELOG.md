@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.6] — 2026-04-25
+
+### Fixed
+- **HTTP method label allow-list** (HIGH). `req.method` (Express) and
+  `c.req.method` (Hono) were passed straight into the
+  `simsys_http_requests_total` label, so a hostile client sending
+  arbitrary methods (`X_AUDIT_1`, `BREW`, `MKCALENDAR`, …) forced one
+  new series per distinct value. Both adapters now run the method
+  through `normalizeMethod()` which collapses anything outside the RFC
+  9110 + PATCH allow-list to `"OTHER"`. Backed by
+  `node/tests/method-normalization.test.ts`.
+- **`trackQueue` rejects non-positive `intervalMs`** (MED). Pre-fix,
+  `intervalMs: 0` created a hot `setInterval` loop that pegged the
+  event loop. Now throws at call time with a clear error.
+
+### Changed
+- Auth-exempt path set returned by `app.locals.simsysExemptPaths`
+  (Express) / `app.simsysExemptPaths` (Hono) now includes the
+  user-supplied `metricsPath` — previously the static set with
+  `/metrics` was always returned regardless of what `install()` was
+  called with.
+
 ## [0.3.5] — 2026-04-25
 
 ### Fixed
@@ -103,6 +125,7 @@ notes:
 - Tarball distribution via GitHub Releases; install URL is the
   `simsys-metrics-0.3.0.tgz` asset attached to the `node-v0.3.0` release.
 
+[0.3.6]: https://github.com/Avicennasis/simsys-metrics/releases/tag/node-v0.3.6
 [0.3.5]: https://github.com/Avicennasis/simsys-metrics/releases/tag/node-v0.3.5
 [0.3.4]: https://github.com/Avicennasis/simsys-metrics/releases/tag/node-v0.3.4
 [0.3.3]: https://github.com/Avicennasis/simsys-metrics/releases/tag/node-v0.3.3

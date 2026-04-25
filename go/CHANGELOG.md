@@ -5,6 +5,27 @@ All notable changes to `simsys-metrics-go` will be documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [go/v0.2.6] — 2026-04-25
+
+### Fixed
+- **HTTP method label allow-list** (HIGH). `r.Method` was passed
+  straight into the `simsys_http_requests_total` label, so a hostile
+  client sending arbitrary methods forced one new series per distinct
+  value. The middleware's shared `recordRequest` helper now routes the
+  method through `NormalizeMethod()` which collapses anything outside
+  the RFC 9110 + PATCH allow-list to `"OTHER"`. Backed by
+  `go/method_normalization_test.go`.
+
+### Changed
+- `go.mod` now declares `go 1.23` as the floor instead of the
+  toolchain-bumped `go 1.25.0`. The `github.com/prometheus/procfs`
+  v0.20+ pin still forces `go >= 1.25.0` via its own go directive,
+  so the effective minimum remains 1.25 in practice — but the module
+  declaration matches what our code actually requires.
+- CI matrix updated to test against Go 1.25.x and 1.26.x (matching
+  the procfs-imposed floor). Previously claimed 1.23.x/1.24.x while
+  the toolchain silently downloaded 1.25.
+
 ## [go/v0.2.5] — 2026-04-25
 
 ### Documentation
@@ -104,6 +125,7 @@ notes:
 - `TrackQueue` panic recovery: a `depthFn` panic logs the first occurrence
   via `slog` and silently absorbs subsequent panics to avoid log floods.
 
+[go/v0.2.6]: https://github.com/Avicennasis/simsys-metrics/releases/tag/go/v0.2.6
 [go/v0.2.5]: https://github.com/Avicennasis/simsys-metrics/releases/tag/go/v0.2.5
 [go/v0.2.4]: https://github.com/Avicennasis/simsys-metrics/releases/tag/go/v0.2.4
 [go/v0.2.3]: https://github.com/Avicennasis/simsys-metrics/releases/tag/go/v0.2.3
