@@ -127,8 +127,7 @@ def install_fastapi(
             if request.url.path == metrics_path:
                 return await call_next(request)
             start = time.perf_counter()
-            response: Optional[Response] = None
-            status_code = 500
+            status_code = 500  # default until call_next returns a Response
             try:
                 response = await call_next(request)
                 status_code = response.status_code

@@ -26,9 +26,9 @@ Grafana dashboard works across every runtime:
 
 | Package | Path | Languages | Tag prefix | Install |
 |---------|------|-----------|------------|---------|
-| `simsys-metrics` (Python) | `/` (root) | FastAPI, Flask | `v<semver>` (e.g. `v0.3.4`) | `pip install ... @ git+https://...@v0.3.4` |
-| [`@simsys/metrics` (Node)](node/) | `node/` | Express 5, Bun + Hono | `node-v<semver>` (e.g. `node-v0.3.4`) | GitHub Release tarball URL |
-| [`simsys-metrics-go`](go/) | `go/` | net/http | `go/v<semver>` (e.g. `go/v0.2.4`) | `go get ...@v0.2.4` |
+| `simsys-metrics` (Python) | `/` (root) | FastAPI, Flask | `v<semver>` (e.g. `v0.3.5`) | `pip install ... @ git+https://...@v0.3.5` |
+| [`@simsys/metrics` (Node)](node/) | `node/` | Express 5, Bun + Hono | `node-v<semver>` (e.g. `node-v0.3.5`) | GitHub Release tarball URL |
+| [`simsys-metrics-go`](go/) | `go/` | net/http | `go/v<semver>` (e.g. `go/v0.2.5`) | `go get ...@v0.2.5` |
 
 The Python package remains at the repo root for pip git-install compatibility. The Node and Go packages live under [`node/`](node/) and [`go/`](go/) respectively — see each subdirectory's README for install details.
 
@@ -66,10 +66,10 @@ up automatically.
 
 ```bash
 # FastAPI service
-pip install "simsys-metrics[fastapi] @ git+https://github.com/Avicennasis/simsys-metrics.git@v0.3.4"
+pip install "simsys-metrics[fastapi] @ git+https://github.com/Avicennasis/simsys-metrics.git@v0.3.5"
 
 # Flask service
-pip install "simsys-metrics[flask] @ git+https://github.com/Avicennasis/simsys-metrics.git@v0.3.4"
+pip install "simsys-metrics[flask] @ git+https://github.com/Avicennasis/simsys-metrics.git@v0.3.5"
 ```
 
 Pin to the tag. Bumping a consumer means re-pointing this URL at a newer tag.
@@ -78,7 +78,7 @@ Pin to the tag. Bumping a consumer means re-pointing this URL at a newer tag.
 <summary>Pinning in <code>requirements.txt</code></summary>
 
 ```
-simsys-metrics[fastapi] @ git+https://github.com/Avicennasis/simsys-metrics.git@v0.3.4
+simsys-metrics[fastapi] @ git+https://github.com/Avicennasis/simsys-metrics.git@v0.3.5
 ```
 
 Works in plain Docker builds — no SSH agent, no auth tokens required.
@@ -171,6 +171,25 @@ unmodified across every app.
 | `simsys_progress_remaining` | Gauge | `service, operation` | opt-in (`track_progress`) |
 | `simsys_progress_rate_per_second` | Gauge | `service, operation` | opt-in (`track_progress`) |
 | `simsys_progress_estimated_completion_timestamp` | Gauge | `service, operation` | opt-in (`track_progress`) |
+
+### Cross-runtime caveat: `simsys_process_memory_bytes.type`
+
+Memory accounting is fundamentally runtime-specific, so the `type` label
+values intentionally **differ across the three sibling packages**:
+
+| Runtime | `type` values |
+|---------|---------------|
+| Python (`simsys-metrics`) | `rss`, `vms` (psutil's resident + virtual sizes) |
+| Go (`simsys-metrics-go`) | `rss`, `vms` (procfs status fields) |
+| Node (`@simsys/metrics`)  | `rss`, `heapUsed`, `heapTotal`, `external` (`process.memoryUsage()`) |
+
+A `$service`-templated dashboard panel filtering `type="vms"` will return
+empty for Node services, and a panel showing `heapUsed` will return
+empty for Python/Go services. Either:
+
+- Build runtime-aware dashboards (one panel per runtime, gated on
+  `service =~ "node-.*"` etc.), or
+- Filter on `type="rss"` only — the one common label value.
 
 ## Rich outcome taxonomies
 

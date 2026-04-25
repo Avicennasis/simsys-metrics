@@ -5,6 +5,50 @@ All notable changes to `simsys-metrics` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.5] — 2026-04-25
+
+Patch release addressing nine findings from a follow-up audit (four
+≥80-confidence + five below-threshold once validated).
+
+### Fixed
+- **`track_job` async detection now handles `functools.partial` and
+  callable instances.** v0.3.3 used `asyncio.iscoroutinefunction` which
+  is also being deprecated in 3.12. Switched to
+  `inspect.iscoroutinefunction` (which correctly detects partial-wrapped
+  coroutines via `__wrapped__`), plus a fall-through that inspects
+  `__call__` for callable-instance wrappers (those return False from the
+  top-level check). Backed by two regression tests in
+  `tests/test_track_job.py`: partial-wrapped async raising → `error=1`,
+  async-callable instance raising → `error=1`.
+- **Removed dead `_QUEUE_THREADS` module-level list.** Every
+  `track_queue()` call appended to it; the list was only ever read by
+  `_reset_for_tests()` for `clear()`. Unbounded leak source for apps
+  that re-init queue trackers in factories. Daemon threads continue to
+  die with the interpreter as before — no behavioural change.
+- **Removed dead `Optional[Response] = None`** in the FastAPI
+  middleware dispatch — the variable was assigned but never read after
+  the `try` block.
+
+### Added
+- `tests/test_fastapi_install_multiproc.py` now drives a real
+  `/items/{id}` route through the BaseHTTPMiddleware under multiproc
+  mode and asserts `simsys_http_requests_total` records the dispatch.
+  Closes a coverage gap from v0.3.3.
+
+### Documentation
+- Added a "Cross-runtime caveat" section to all three READMEs
+  (`README.md`, `node/README.md`, `go/README.md`) documenting that
+  `simsys_process_memory_bytes.type` label values are intentionally
+  runtime-specific (Python+Go: `rss`/`vms`; Node:
+  `rss`/`heapUsed`/`heapTotal`/`external`). A `$service`-templated
+  dashboard panel filtering `type="vms"` will return empty for Node
+  services. The `rss` value is the only label-value common to all
+  three runtimes.
+- `node/README.md` metric catalogue now lists the four
+  `simsys_progress_*` rows (was missing despite being defined in code).
+- `node/CHANGELOG.md` and `go/CHANGELOG.md` heading-separator
+  standardised on em-dash to match the root file (was hyphen).
+
 ## [0.3.4] — 2026-04-25
 
 Documentation-only release. No code changes.
@@ -147,6 +191,7 @@ First public release.
 - pre-commit with ruff (lint + format).
 - OpenSSF Scorecard, build provenance attestation on Go releases.
 
+[0.3.5]: https://github.com/Avicennasis/simsys-metrics/releases/tag/v0.3.5
 [0.3.4]: https://github.com/Avicennasis/simsys-metrics/releases/tag/v0.3.4
 [0.3.3]: https://github.com/Avicennasis/simsys-metrics/releases/tag/v0.3.3
 [0.3.2]: https://github.com/Avicennasis/simsys-metrics/releases/tag/v0.3.2

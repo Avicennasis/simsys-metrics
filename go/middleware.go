@@ -55,7 +55,23 @@ func recordRequest(m *Metrics, r *http.Request, extractor RouteExtractor, status
 
 // Middleware returns an http.Handler wrapper that records
 // simsys_http_requests_total + simsys_http_request_duration_seconds
-// on every request. Usage:
+// on every request.
+//
+// Panic recovery: handler panics are recorded as status="5xx" (the
+// metric is emitted before the panic re-propagates), then re-panicked
+// so net/http's default recovery (log + close connection) still runs.
+// If the handler had explicitly written a status code before
+// panicking, that status is preserved.
+//
+// Hijack-then-panic edge case: if a handler calls
+// http.NewResponseController(w).Hijack() and then panics, the metric
+// records 5xx as expected, but the re-panic propagates to a connection
+// that is no longer http-managed — net/http cannot write a 500 body,
+// it just closes the underlying socket. The client sees an abrupt
+// connection close. This is the correct outcome (the protocol may
+// already be mid-upgrade) but worth knowing for websocket-heavy apps.
+//
+// Usage:
 //
 //	mux := http.NewServeMux()
 //	mux.Handle("/", app)

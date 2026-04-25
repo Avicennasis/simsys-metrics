@@ -5,7 +5,25 @@ All notable changes to `simsys-metrics-go` will be documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [go/v0.2.4] - 2026-04-25
+## [go/v0.2.5] — 2026-04-25
+
+### Documentation
+- `Middleware` godoc gained a note covering the hijack-then-panic edge
+  case: a handler that calls `http.NewResponseController(w).Hijack()`
+  and then panics still records `status="5xx"` correctly, but the
+  re-panic propagates to a connection that is no longer http-managed —
+  net/http closes the underlying socket without writing a 500 body.
+  Correct behavior for mid-upgrade websockets; documented so it
+  doesn't surprise consumers.
+- README install snippet bumped from `v0.2.4` to `v0.2.5`.
+- README gained a "Cross-runtime caveat" section explaining the
+  `simsys_process_memory_bytes.type` label-value divergence between
+  Python+Go (`rss`/`vms`) and Node
+  (`rss`/`heapUsed`/`heapTotal`/`external`).
+- CHANGELOG heading separators standardized on em-dash to match the
+  root file (was hyphen).
+
+## [go/v0.2.4] — 2026-04-25
 
 ### Documentation
 - README install snippet bumped from `go/v0.2.0` to `v0.2.4`. Added a
@@ -15,7 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 No code changes.
 
-## [go/v0.2.3] - 2026-04-25
+## [go/v0.2.3] — 2026-04-25
 
 ### Fixed
 - **Handler panics are now correctly recorded as 5xx.** Previously, if
@@ -32,7 +50,7 @@ No code changes.
 - Refactored shared labelling logic into `recordRequest()` so the
   happy path and the panic-recovery path can't drift apart.
 
-## [go/v0.2.2] - 2026-04-25
+## [go/v0.2.2] — 2026-04-25
 
 ### Added
 - Test coverage: `TestInstallIdempotentProcCollectorReused` directly
@@ -48,7 +66,7 @@ No code changes.
   Registry; allocate a fresh Registry to legitimately re-init under a
   new identity.
 
-## [go/v0.2.1] - 2026-04-25
+## [go/v0.2.1] — 2026-04-25
 
 ### Fixed
 - **`Install()` no longer orphans a process collector on second call.**
@@ -61,7 +79,7 @@ No code changes.
   registered collector is reused. No user-visible behaviour change for
   first-call installs.
 
-## [go/v0.2.0] - 2026-04-25
+## [go/v0.2.0] — 2026-04-25
 
 First public release of the Go sibling package. See the
 [root CHANGELOG](../CHANGELOG.md) for the full feature set; Go-specific
@@ -86,6 +104,7 @@ notes:
 - `TrackQueue` panic recovery: a `depthFn` panic logs the first occurrence
   via `slog` and silently absorbs subsequent panics to avoid log floods.
 
+[go/v0.2.5]: https://github.com/Avicennasis/simsys-metrics/releases/tag/go/v0.2.5
 [go/v0.2.4]: https://github.com/Avicennasis/simsys-metrics/releases/tag/go/v0.2.4
 [go/v0.2.3]: https://github.com/Avicennasis/simsys-metrics/releases/tag/go/v0.2.3
 [go/v0.2.2]: https://github.com/Avicennasis/simsys-metrics/releases/tag/go/v0.2.2

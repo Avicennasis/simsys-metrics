@@ -45,7 +45,7 @@ The Node package ships as a tarball attached to each `node-v*` GitHub Release. P
 ```json
 {
   "dependencies": {
-    "@simsys/metrics": "https://github.com/Avicennasis/simsys-metrics/releases/download/node-v0.3.4/simsys-metrics-0.3.4.tgz"
+    "@simsys/metrics": "https://github.com/Avicennasis/simsys-metrics/releases/download/node-v0.3.5/simsys-metrics-0.3.5.tgz"
   }
 }
 ```
@@ -188,11 +188,32 @@ works unmodified across every app.
 | `simsys_queue_depth` | Gauge | `service, queue` | opt-in (`trackQueue`) |
 | `simsys_jobs_total` | Counter | `service, job, outcome` | opt-in (`trackJob`) |
 | `simsys_job_duration_seconds` | Histogram | `service, job, outcome` | opt-in (`trackJob`) |
+| `simsys_progress_processed_total` | Counter | `service, operation` | opt-in (`trackProgress`) |
+| `simsys_progress_remaining` | Gauge | `service, operation` | opt-in (`trackProgress`) |
+| `simsys_progress_rate_per_second` | Gauge | `service, operation` | opt-in (`trackProgress`) |
+| `simsys_progress_estimated_completion_timestamp` | Gauge | `service, operation` | opt-in (`trackProgress`) |
 
 Alongside the `simsys_*` set, the registry serves prom-client's Node.js default
 metrics (`nodejs_*`, `process_*` — GC stats, event-loop lag, heap spaces) so
 runtime health for the Node process is visible without extra wiring. Those
 carry the `service` default label.
+
+### Cross-runtime caveat: `simsys_process_memory_bytes.type`
+
+Memory accounting is fundamentally runtime-specific. The `type` label
+values for `simsys_process_memory_bytes` differ across the three sibling
+packages:
+
+| Runtime | `type` values |
+|---------|---------------|
+| Node (this package) | `rss`, `heapUsed`, `heapTotal`, `external` (`process.memoryUsage()`) |
+| Python (`simsys-metrics`) | `rss`, `vms` (psutil's resident + virtual sizes) |
+| Go (`simsys-metrics-go`) | `rss`, `vms` (procfs status fields) |
+
+A `$service`-templated dashboard filtering `type="heapUsed"` returns
+nothing for Python/Go services; filtering `type="vms"` returns nothing
+for Node. Either build runtime-aware panels or filter on `type="rss"` —
+the one label value common to all three runtimes.
 
 ## Cardinality rules
 

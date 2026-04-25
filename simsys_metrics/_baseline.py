@@ -16,8 +16,8 @@ code never has to pass ``service=`` at every call site.
 
 from __future__ import annotations
 
-import asyncio
 import functools
+import inspect
 import logging
 import os
 import threading
@@ -57,7 +57,6 @@ job_duration_seconds = make_histogram(
 
 _SERVICE: Optional[str] = None
 _SERVICE_LOCK = threading.Lock()
-_QUEUE_THREADS: list[threading.Thread] = []
 
 
 def set_service(service: str) -> None:
@@ -117,7 +116,6 @@ def track_queue(
         daemon=True,
     )
     t.start()
-    _QUEUE_THREADS.append(t)
     return t
 
 
@@ -158,7 +156,25 @@ def track_job(job: str):
 
     class _Tracker:
         def __call__(self, fn):
-            if asyncio.iscoroutinefunction(fn):
+            # Detect coroutine-producing callables broadly:
+            #   * plain `async def` functions
+            #   * `functools.partial(async_fn, ...)` (via __wrapped__)
+            #   * decorators that preserve __wrapped__
+            #   * callable instances whose __call__ is `async def`
+            # All need the async wrapper; otherwise the timing span exits
+            # when the unawaited coroutine is RETURNED, before the work
+            # runs — silently misrecording async exceptions as
+            # outcome="success".
+            #
+            # `inspect.iscoroutinefunction(fn)` covers the first three but
+            # returns False for callable instances (it inspects fn itself,
+            # not fn.__call__). Fall back to inspecting __call__ for the
+            # instance case.
+            is_async = inspect.iscoroutinefunction(fn) or (
+                callable(fn)
+                and inspect.iscoroutinefunction(getattr(fn, "__call__", None))
+            )
+            if is_async:
 
                 @functools.wraps(fn)
                 async def async_wrapper(*args, **kwargs):
@@ -185,8 +201,14 @@ def track_job(job: str):
 
 
 def _reset_for_tests() -> None:
-    """Test-only: clear the service global and forget queue threads."""
+    """Test-only: clear the process-wide service global.
+
+    track_queue() spawns daemon threads which are not cleanly stoppable;
+    they die with the interpreter. The previous module-level reference
+    list (_QUEUE_THREADS) was an unbounded leak source — appended on
+    every track_queue call but never read except for `clear()` here.
+    Removed in v0.3.5.
+    """
     global _SERVICE
     with _SERVICE_LOCK:
         _SERVICE = None
-    _QUEUE_THREADS.clear()

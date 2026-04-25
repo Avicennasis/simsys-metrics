@@ -16,7 +16,7 @@ go get github.com/Avicennasis/simsys-metrics/go@latest
 Pin to a specific release:
 
 ```bash
-go get github.com/Avicennasis/simsys-metrics/go@v0.2.4
+go get github.com/Avicennasis/simsys-metrics/go@v0.2.5
 ```
 
 Note: the GitHub release tag is named `go/vX.Y.Z` (per Go's
@@ -109,6 +109,21 @@ Histogram bucket schedules:
 - **Jobs**: `[0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 300]` (seconds to minutes)
 
 Both identical to Python/Node so cross-app dashboards align.
+
+### Cross-runtime caveat: `simsys_process_memory_bytes.type`
+
+Memory accounting is runtime-specific. The `type` label values differ
+across the three sibling packages:
+
+| Runtime | `type` values |
+|---------|---------------|
+| Go (this package) | `rss`, `vms` (procfs status fields) |
+| Python (`simsys-metrics`) | `rss`, `vms` (psutil's resident + virtual sizes) |
+| Node (`@simsys/metrics`) | `rss`, `heapUsed`, `heapTotal`, `external` (`process.memoryUsage()`) |
+
+A `$service`-templated dashboard filtering `type="vms"` returns nothing
+for Node services. Either build runtime-aware panels or filter on
+`type="rss"` — the one label value common to all three runtimes.
 
 ## Prefix guard
 

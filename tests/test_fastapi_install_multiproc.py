@@ -45,12 +45,28 @@ def do_work():
     return "ok"
 
 
+# Real route to exercise the BaseHTTPMiddleware dispatch path under
+# multiproc mode. Without this, the test only hit /metrics, leaving
+# the http-middleware multiproc dispatch unverified.
+@app.get("/items/{item_id}")
+def item(item_id: int):
+    return {"id": item_id}
+
+
 # Exercise the job decorator inline so simsys_jobs_total should be non-zero.
 do_work()
 do_work()
 do_work()
 
 client = TestClient(app)
+
+# Drive at least one real request through the BaseHTTPMiddleware so
+# simsys_http_requests_total picks up the multiproc-mode dispatch.
+items_response = client.get("/items/42")
+assert items_response.status_code == 200, (
+    f"/items/42 returned {items_response.status_code}"
+)
+
 r = client.get("/metrics")
 assert r.status_code == 200, f"/metrics returned {r.status_code}"
 
@@ -76,15 +92,28 @@ for line in body.splitlines():
         except ValueError:
             pass
 
+# Did the BaseHTTPMiddleware multiproc dispatch record the /items/{item_id} hit?
+http_items_count = 0.0
+for line in body.splitlines():
+    if line.startswith("#") or not line.startswith("simsys_http_requests_total"):
+        continue
+    if 'route="/items/{item_id}"' in line and 'status="2xx"' in line:
+        try:
+            http_items_count += float(line.rsplit(" ", 1)[1])
+        except ValueError:
+            pass
+
 result = {
     "status_code": r.status_code,
     "content_type": r.headers.get("content-type", ""),
     "has_build_info": "simsys_build_info" in names,
     "has_jobs_total": "simsys_jobs_total" in names,
+    "has_http_requests": "simsys_http_requests_total" in names,
     "has_process_cpu": "simsys_process_cpu_seconds_total" in names,
     "has_process_memory": "simsys_process_memory_bytes" in names,
     "has_process_open_fds": "simsys_process_open_fds" in names,
     "jobs_total_success": jobs_total_success,
+    "http_items_count": http_items_count,
     "sample_names": sorted(n for n in names if n.startswith("simsys_"))[:30],
 }
 
@@ -166,4 +195,25 @@ def test_multiproc_install_skips_process_collector(tmp_path):
     )
     assert not result["has_process_open_fds"], (
         "simsys_process_open_fds unexpectedly present in multiproc mode"
+    )
+
+
+def test_multiproc_basehttpmiddleware_records_http_requests(tmp_path):
+    """BaseHTTPMiddleware dispatch under multiproc mode records HTTP metrics.
+
+    Pre-v0.3.5 this path was not exercised by any test — the multiproc
+    subprocess only ever hit /metrics, leaving the v0.3.3
+    BaseHTTPMiddleware migration unverified for the multiproc branch.
+    Now we GET a real /items/{id} route and assert the resulting
+    simsys_http_requests_total sample shows up under multiproc
+    aggregation.
+    """
+    result = _run_subprocess_with_multiproc_dir(str(tmp_path))
+    assert result["has_http_requests"], (
+        "simsys_http_requests_total absent under multiproc mode; "
+        f"saw simsys_* = {result['sample_names']}"
+    )
+    assert result["http_items_count"] >= 1.0, (
+        f"expected at least one /items/{{item_id}} 2xx sample under "
+        f"multiproc, got count={result['http_items_count']}"
     )

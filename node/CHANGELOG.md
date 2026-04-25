@@ -5,7 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.3.4] - 2026-04-25
+## [0.3.5] — 2026-04-25
+
+### Fixed
+- **CPU counter concurrent-scrape race.** prom-client's `Registry.metrics()`
+  walks collectors via `Promise.all` with no per-registry mutex, so two
+  concurrent /metrics scrapes (e.g. Prometheus + a sidecar push monitor)
+  could both observe the same `lastCpuSeconds` value and inc the
+  counter by ~2× the actual CPU delta. The cpu collect callback now
+  serializes via a module-scoped `cpuCollectMutex: Promise<void>` chain
+  so only one read-update-inc sequence runs at a time. Backed by
+  `node/tests/cpu-counter-race.test.ts` (16 parallel scrapes assert
+  monotonic + bounded counter values).
+
+### Documentation
+- README install snippet bumped from `node-v0.3.4` to `node-v0.3.5`.
+- README metric catalogue now lists the four `simsys_progress_*` rows
+  (was missing despite being defined in code).
+- README gained a "Cross-runtime caveat" section explaining that
+  `simsys_process_memory_bytes.type` label values are runtime-specific
+  (`rss`/`heapUsed`/`heapTotal`/`external` in Node vs `rss`/`vms` in
+  Python/Go). The `rss` value is the only common label across all
+  three sibling packages.
+- CHANGELOG heading separators standardized on em-dash to match the
+  root file (was hyphen).
+
+## [0.3.4] — 2026-04-25
 
 ### Documentation
 - README install snippet bumped from `node-v0.3.3` to `node-v0.3.4`.
@@ -14,7 +39,7 @@ No code changes; version bump keeps the three sibling packages on a
 matched semver line. See the [root CHANGELOG](../CHANGELOG.md) for the
 v0.3.4 documentation cleanup that prompted this release.
 
-## [0.3.3] - 2026-04-25
+## [0.3.3] — 2026-04-25
 
 ### Fixed
 - **`install()` is now idempotent.** A second call on the same Express
@@ -42,7 +67,7 @@ v0.3.4 documentation cleanup that prompted this release.
   several releases. `npm ci` now succeeds against the lockfile.
 - README install snippet bumped to `node-v0.3.3` tarball URL.
 
-## [0.3.2] - 2026-04-25
+## [0.3.2] — 2026-04-25
 
 ### Documentation
 - README install snippet bumped to the v0.3.2 tarball URL (was stale
@@ -52,7 +77,7 @@ No code changes in the Node package; version bumped to keep the three
 sibling packages on a matched semver line. See the
 [root CHANGELOG](../CHANGELOG.md) for v0.3.2 fixes (Python-only).
 
-## [0.3.1] - 2026-04-25
+## [0.3.1] — 2026-04-25
 
 No code changes in the Node package — version bumped to keep all three
 sibling packages on a matched semver line. See the
@@ -61,7 +86,7 @@ sibling packages on a matched semver line. See the
 The Development section of `node/README.md` was rewritten to reference
 the unified monorepo layout (was a stale pre-merge URL).
 
-## [0.3.0] - 2026-04-25
+## [0.3.0] — 2026-04-25
 
 First public release of the Node sibling package. See the
 [root CHANGELOG](../CHANGELOG.md) for the full feature set; Node-specific
@@ -78,6 +103,7 @@ notes:
 - Tarball distribution via GitHub Releases; install URL is the
   `simsys-metrics-0.3.0.tgz` asset attached to the `node-v0.3.0` release.
 
+[0.3.5]: https://github.com/Avicennasis/simsys-metrics/releases/tag/node-v0.3.5
 [0.3.4]: https://github.com/Avicennasis/simsys-metrics/releases/tag/node-v0.3.4
 [0.3.3]: https://github.com/Avicennasis/simsys-metrics/releases/tag/node-v0.3.3
 [0.3.2]: https://github.com/Avicennasis/simsys-metrics/releases/tag/node-v0.3.2

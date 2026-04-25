@@ -126,3 +126,71 @@ def test_track_job_async_decorator_error_attributed_correctly():
         f"async exception must NOT increment outcome=success counter "
         f"(was {success_before}, now {success_after} — this is the bug)"
     )
+
+
+def test_track_job_async_via_functools_partial():
+    """track_job must detect coroutine-ness through functools.partial.
+
+    `functools.partial(async_fn, ...)` is itself NOT an `async def`
+    callable, but calling it returns a coroutine. inspect.iscoroutinefunction
+    sees through the partial via __wrapped__; asyncio.iscoroutinefunction
+    historically did not on older Python. The fix in v0.3.5 swapped to
+    inspect.iscoroutinefunction so consumers using partial-wrapped async
+    handlers (a common pattern when binding default args) don't regress
+    into the v0.3.2 misrecording bug.
+    """
+    import asyncio
+    import functools
+
+    set_service("job_test_svc")
+
+    async def real_async(arg):
+        await asyncio.sleep(0)
+        if arg == "boom":
+            raise ValueError("partial async error")
+        return arg
+
+    bound = functools.partial(real_async, "boom")
+
+    # Apply track_job to the partial — the tracker should detect coroutine
+    # and use the async wrapper.
+    wrapped = track_job("partial_async_err")(bound)
+
+    success_before = _count("partial_async_err", "success")
+    error_before = _count("partial_async_err", "error")
+
+    with pytest.raises(ValueError, match="partial async error"):
+        asyncio.run(wrapped())
+
+    assert _count("partial_async_err", "error") == error_before + 1, (
+        "partial-wrapped async exception must increment error counter"
+    )
+    assert _count("partial_async_err", "success") == success_before, (
+        "partial-wrapped async exception must NOT increment success counter"
+    )
+
+
+def test_track_job_async_via_callable_instance():
+    """track_job must detect coroutine-ness on instances whose __call__
+    is `async def`.
+    """
+    import asyncio
+
+    set_service("job_test_svc")
+
+    class AsyncCaller:
+        async def __call__(self, x):
+            await asyncio.sleep(0)
+            raise RuntimeError(f"instance fail: {x}")
+
+    instance = AsyncCaller()
+    wrapped = track_job("async_callable_instance_err")(instance)
+
+    error_before = _count("async_callable_instance_err", "error")
+    success_before = _count("async_callable_instance_err", "success")
+
+    with pytest.raises(RuntimeError, match="instance fail"):
+        asyncio.run(wrapped("x"))
+
+    assert _count("async_callable_instance_err", "error") == error_before + 1
+    assert _count("async_callable_instance_err", "success") == success_before
