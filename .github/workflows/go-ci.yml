@@ -1,0 +1,63 @@
+name: Go CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "go/**"
+      - ".github/workflows/go-ci.yml"
+  pull_request:
+    paths:
+      - "go/**"
+      - ".github/workflows/go-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (Go ${{ matrix.go-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        go-version: ["1.23.x", "1.24.x"]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/setup-go@3041bf56c941b39c61721a86cd11f3bb1338122a # v5.2.0
+        with:
+          go-version: ${{ matrix.go-version }}
+          cache-dependency-path: go/go.sum
+
+      - name: go vet
+        working-directory: go
+        run: go vet ./...
+
+      - name: go test (race detector + coverage)
+        working-directory: go
+        run: go test -race -coverprofile=coverage.out ./...
+
+      - name: Coverage summary
+        working-directory: go
+        run: go tool cover -func=coverage.out | tail -20
+
+  staticcheck:
+    name: staticcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/setup-go@3041bf56c941b39c61721a86cd11f3bb1338122a # v5.2.0
+        with:
+          go-version: "1.24.x"
+          cache-dependency-path: go/go.sum
+
+      - name: Install staticcheck
+        # Pinned to a tagged release rather than @latest to keep CI immune to
+        # upstream takeover or typosquat redirect.
+        run: go install honnef.co/go/tools/cmd/staticcheck@2026.1
+
+      - name: staticcheck
+        working-directory: go
+        run: staticcheck ./...

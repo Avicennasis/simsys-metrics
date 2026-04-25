@@ -1,0 +1,191 @@
+/**
+ * Process-wide service state + opt-in helpers (trackQueue, trackJob, safeLabel).
+ *
+ * Matches `simsys_metrics._baseline` and `simsys_metrics.helpers` (Python).
+ */
+
+import { queueDepth, jobsTotal, jobDurationSeconds } from "./registry.js";
+
+let _service: string | null = null;
+const _queueTimers: NodeJS.Timeout[] = [];
+
+export function setService(service: string): void {
+  _service = service;
+}
+
+export function getService(): string {
+  if (_service === null) {
+    throw new Error(
+      "simsys-metrics: no service set. Call install(app, { service, version }) first.",
+    );
+  }
+  return _service;
+}
+
+// -------- trackQueue --------
+
+export interface TrackQueueOpts {
+  depthFn: () => number | Promise<number>;
+  intervalMs?: number;
+}
+
+/**
+ * Poll ``depthFn()`` every ``intervalMs`` (default 5000) and update the
+ * ``simsys_queue_depth`` gauge for the given queue name.
+ *
+ * Returns the interval handle. Safe to ignore; call `.unref()` yourself if
+ * you need the process to exit while the timer is pending.
+ */
+export function trackQueue(
+  name: string,
+  opts: TrackQueueOpts,
+): NodeJS.Timeout {
+  const service = getService();
+  const intervalMs = opts.intervalMs ?? 5000;
+
+  const tick = async () => {
+    let depth = 0;
+    try {
+      const raw = await opts.depthFn();
+      depth = Math.trunc(Number(raw) || 0);
+    } catch {
+      depth = 0;
+    }
+    try {
+      queueDepth.labels({ service, queue: name }).set(depth);
+    } catch {
+      /* swallow */
+    }
+  };
+
+  // First sample immediately so the gauge is populated before the first scrape.
+  void tick();
+  const timer = setInterval(tick, intervalMs);
+  // Don't hold the event loop open purely for the metric timer.
+  if (typeof timer.unref === "function") {
+    timer.unref();
+  }
+  _queueTimers.push(timer);
+  return timer;
+}
+
+// -------- trackJob --------
+
+type AnyFn = (...args: unknown[]) => unknown;
+
+/**
+ * Wrap a function to emit ``simsys_jobs_total`` + ``simsys_job_duration_seconds``.
+ *
+ * Two usage shapes:
+ *
+ *   // 1. Function-wrapper style (sync or async):
+ *   const runInference = trackJob("inference")(async (...args) => { ... });
+ *
+ *   // 2. Ad-hoc async span (no wrapping):
+ *   await trackJob("inference").run(async () => {
+ *     // ...the work...
+ *   });
+ */
+export interface JobTracker {
+  <F extends AnyFn>(fn: F): F;
+  run<T>(fn: () => T | Promise<T>): Promise<T>;
+}
+
+export function trackJob(jobName: string): JobTracker {
+  const record = (elapsedSec: number, outcome: "success" | "error") => {
+    const service = getService();
+    jobsTotal.labels({ service, job: jobName, outcome }).inc();
+    jobDurationSeconds
+      .labels({ service, job: jobName, outcome })
+      .observe(elapsedSec);
+  };
+
+  const wrapClean = <F extends AnyFn>(fn: F): F => {
+    const wrapped = function (this: unknown, ...args: unknown[]): unknown {
+      const start = process.hrtime.bigint();
+      let settled = false;
+      try {
+        const out = fn.apply(this, args);
+        if (out && typeof (out as Promise<unknown>).then === "function") {
+          // Async: record on settle.
+          return (out as Promise<unknown>).then(
+            (v) => {
+              if (!settled) {
+                settled = true;
+                record(
+                  Number(process.hrtime.bigint() - start) / 1e9,
+                  "success",
+                );
+              }
+              return v;
+            },
+            (e) => {
+              if (!settled) {
+                settled = true;
+                record(Number(process.hrtime.bigint() - start) / 1e9, "error");
+              }
+              throw e;
+            },
+          );
+        }
+        // Sync success.
+        settled = true;
+        record(Number(process.hrtime.bigint() - start) / 1e9, "success");
+        return out;
+      } catch (e) {
+        if (!settled) {
+          settled = true;
+          record(Number(process.hrtime.bigint() - start) / 1e9, "error");
+        }
+        throw e;
+      }
+    };
+    return wrapped as unknown as F;
+  };
+
+  const tracker = wrapClean as JobTracker;
+
+  tracker.run = async <T,>(fn: () => T | Promise<T>): Promise<T> => {
+    const start = process.hrtime.bigint();
+    try {
+      const out = await fn();
+      record(Number(process.hrtime.bigint() - start) / 1e9, "success");
+      return out;
+    } catch (e) {
+      record(Number(process.hrtime.bigint() - start) / 1e9, "error");
+      throw e;
+    }
+  };
+
+  return tracker;
+}
+
+// -------- safeLabel --------
+
+const OTHER = "other";
+
+/**
+ * Coerce any user-facing value into a bounded allow-list.
+ *
+ *   safeLabel(req.query.ticker, new Set(["AAPL", "GOOG"]))  // -> "AAPL" or "other"
+ */
+export function safeLabel(
+  value: unknown,
+  allowed: Iterable<string>,
+): string {
+  if (value === null || value === undefined) return OTHER;
+  const s = typeof value === "string" ? value : String(value);
+  const set =
+    allowed instanceof Set ? allowed : new Set<string>(allowed as Iterable<string>);
+  return set.has(s) ? s : OTHER;
+}
+
+// -------- test helpers --------
+
+export function _resetForTests(): void {
+  _service = null;
+  while (_queueTimers.length) {
+    const t = _queueTimers.pop();
+    if (t) clearInterval(t);
+  }
+}

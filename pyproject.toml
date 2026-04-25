@@ -1,0 +1,62 @@
+[build-system]
+requires = ["hatchling>=1.21"]
+build-backend = "hatchling.build"
+
+[project]
+name = "simsys-metrics"
+version = "0.3.0"
+description = "Drop-in Prometheus /metrics template for FastAPI and Flask web apps. One install() call; consistent simsys_* metric catalogue; optional queue/job/progress helpers."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "Avicennasis" }]
+keywords = ["prometheus", "metrics", "fastapi", "flask", "observability"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: System :: Monitoring",
+]
+dependencies = [
+  "prometheus-client>=0.19",
+  "psutil>=5.9",
+]
+
+[project.optional-dependencies]
+fastapi = [
+  "fastapi>=0.100",
+  "prometheus-fastapi-instrumentator>=7.0",
+  "starlette>=0.27",
+]
+flask = [
+  "flask>=2.2",
+]
+test = [
+  "pytest>=7.4",
+  "pytest-cov>=4.1",
+  "httpx>=0.25",
+  "fastapi>=0.100",
+  "prometheus-fastapi-instrumentator>=7.0",
+  "flask>=2.2",
+  "uvicorn>=0.25",
+]
+
+[project.urls]
+Homepage = "https://github.com/Avicennasis/simsys-metrics"
+Changelog = "https://github.com/Avicennasis/simsys-metrics/blob/main/CHANGELOG.md"
+Issues = "https://github.com/Avicennasis/simsys-metrics/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["simsys_metrics"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"simsys_metrics/py.typed" = "simsys_metrics/py.typed"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+filterwarnings = ["ignore::DeprecationWarning"]

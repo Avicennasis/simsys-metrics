@@ -1,0 +1,280 @@
+# simsys-metrics
+
+> A drop-in Prometheus `/metrics` template for Python and Node.js web apps. One `install()` call; consistent metric catalogue; zero-per-app dashboard work.
+
+[![CI](https://github.com/Avicennasis/simsys-metrics/actions/workflows/test.yml/badge.svg)](https://github.com/Avicennasis/simsys-metrics/actions/workflows/test.yml)
+[![codecov](https://codecov.io/gh/Avicennasis/simsys-metrics/branch/main/graph/badge.svg)](https://codecov.io/gh/Avicennasis/simsys-metrics)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/Avicennasis/simsys-metrics/badge)](https://scorecard.dev/viewer/?uri=github.com/Avicennasis/simsys-metrics)
+[![Release](https://img.shields.io/github/v/release/Avicennasis/simsys-metrics?display_name=tag)](https://github.com/Avicennasis/simsys-metrics/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-supported-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![Flask](https://img.shields.io/badge/Flask-supported-000000.svg?logo=flask&logoColor=white)](https://flask.palletsprojects.com/)
+[![Node.js](https://img.shields.io/badge/Node.js-supported-339933.svg?logo=node.js&logoColor=white)](node/)
+[![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit)](https://github.com/pre-commit/pre-commit)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+
+---
+
+## Monorepo layout
+
+This repository ships **two packages** sharing one metric catalogue:
+
+| Package | Path | Languages | Tag prefix |
+|---------|------|-----------|------------|
+| `simsys-metrics` (Python) | `/` (root) | FastAPI, Flask | `v<semver>` (e.g. `v0.3.0`) |
+| [`@simsys/metrics` (Node)](node/) | `node/` | Express 5, Bun + Hono | `node-v<semver>` (e.g. `node-v0.3.0`) |
+
+The Python package remains at the repo root for pip git-install compatibility. The Node package lives under [`node/`](node/) — consumers install via a GitHub Release tarball URL (see `node/README.md`).
+
+---
+
+A drop-in observability layer for any Python web app. Adding baseline
+metrics is a five-line job, and every emitted series carries the same
+`service` label so a generic `$service`-templated Grafana dashboard lights
+up automatically.
+
+- **Supported stacks:** FastAPI (primary), Flask (secondary).
+- **Baseline metrics** (zero extra code): HTTP request count + latency,
+  process CPU/RSS/FDs, build info.
+- **Opt-in helpers:** queue depth gauge, job counter + histogram.
+- **Cardinality discipline** enforced by the package: route templates,
+  status classes, allow-listed label helper. Every metric name must start
+  with `simsys_` — the registry refuses anything else.
+
+## Table of contents
+
+- [Install](#install)
+- [Usage](#usage)
+  - [FastAPI](#fastapi)
+  - [Flask](#flask)
+  - [`safe_label` — cardinality helper](#safe_label--cardinality-helper)
+- [Metric catalogue](#metric-catalogue)
+- [Cardinality rules](#cardinality-rules)
+- [`commit` detection](#commit-detection)
+- [`/metrics` endpoint behaviour](#metrics-endpoint-behaviour)
+- [Development](#development)
+- [Contributing](#contributing)
+- [License](#license)
+
+## Install
+
+```bash
+# FastAPI service
+pip install "simsys-metrics[fastapi] @ git+https://github.com/Avicennasis/simsys-metrics.git@v0.3.0"
+
+# Flask service
+pip install "simsys-metrics[flask] @ git+https://github.com/Avicennasis/simsys-metrics.git@v0.3.0"
+```
+
+Pin to the tag. Bumping a consumer means re-pointing this URL at a newer tag.
+
+<details>
+<summary>Pinning in <code>requirements.txt</code></summary>
+
+```
+simsys-metrics[fastapi] @ git+https://github.com/Avicennasis/simsys-metrics.git@v0.3.0
+```
+
+Works in plain Docker builds — no SSH agent, no auth tokens required.
+
+</details>
+
+## Usage
+
+### FastAPI
+
+```python
+from fastapi import FastAPI
+from simsys_metrics import install, track_queue, track_job
+
+app = FastAPI()
+install(app, service="my-api", version="1.2.3")
+
+# Opt-in queue gauge (polled every 5s in a daemon thread)
+track_queue("inference", depth_fn=lambda: job_queue.qsize())
+
+# Opt-in per-job timer — as a decorator
+@track_job("inference")
+def run_inference(...): ...
+
+# ...or as a context manager
+def run(...):
+    with track_job("inference"):
+        ...
+
+# Opt-in batch-progress tracking (v0.2.0+)
+from simsys_metrics import track_progress, ProgressOpts
+tracker = track_progress(ProgressOpts(operation="scan", total=input_count))
+try:
+    for item in work:
+        process(item)
+        tracker.inc()
+finally:
+    tracker.stop()
+```
+
+### Flask
+
+```python
+from flask import Flask
+from simsys_metrics import install
+
+app = Flask(__name__)
+install(app, service="my-worker", version="0.4.1")
+```
+
+`install()` auto-detects the framework. It sets the process-wide `service`
+label, registers the simsys process collector, wires HTTP request metrics,
+mounts `/metrics`, and populates `simsys_build_info`.
+
+Default `metrics_path` is `/metrics`; override with
+`install(..., metrics_path="/internal/metrics")`.
+
+### `safe_label` — cardinality helper
+
+Coerce any user-facing label value into a bounded allow-list:
+
+```python
+from simsys_metrics import safe_label
+
+ticker = safe_label(request.args.get("ticker"), {"AAPL", "GOOG", "NVDA"})
+# -> "AAPL" if in the set, else "other"
+```
+
+Use this for anything an external caller controls (tickers, tenant names,
+device IDs, free-form search terms) before it ends up as a Prometheus label.
+
+## Metric catalogue
+
+Every metric uses the `simsys_` prefix and a `service` label, so cross-service
+PromQL like `sum by (service) (rate(simsys_http_requests_total[5m]))` works
+unmodified across every app.
+
+| Metric | Type | Labels | Source |
+|---|---|---|---|
+| `simsys_http_requests_total` | Counter | `service, method, route, status` | baseline |
+| `simsys_http_request_duration_seconds` | Histogram | `service, method, route` | baseline |
+| `simsys_process_cpu_seconds_total` | Counter | `service` | baseline |
+| `simsys_process_memory_bytes` | Gauge | `service, type` (`rss`, `vms`) | baseline |
+| `simsys_process_open_fds` | Gauge | `service` | baseline |
+| `simsys_build_info` | Gauge = 1 | `service, version, commit, started_at` | baseline |
+| `simsys_queue_depth` | Gauge | `service, queue` | opt-in (`track_queue`) |
+| `simsys_jobs_total` | Counter | `service, job, outcome` | opt-in (`track_job`) |
+| `simsys_job_duration_seconds` | Histogram | `service, job, outcome` | opt-in (`track_job`) |
+| `simsys_progress_processed_total` | Counter | `service, operation` | opt-in (`track_progress`) |
+| `simsys_progress_remaining` | Gauge | `service, operation` | opt-in (`track_progress`) |
+| `simsys_progress_rate_per_second` | Gauge | `service, operation` | opt-in (`track_progress`) |
+| `simsys_progress_estimated_completion_timestamp` | Gauge | `service, operation` | opt-in (`track_progress`) |
+
+## Rich outcome taxonomies
+
+`@track_job` uses a 2-value `{success, error}` enum intentionally — it's the
+minimum useful signal for generic job timing, and the label stays cheap.
+
+When an app needs a richer per-operation outcome taxonomy (cache hits, validation
+errors, upstream failures, etc.), hand-roll a counter via `make_counter` from the
+guarded registry:
+
+```python
+from simsys_metrics._registry import make_counter
+
+forecast_requests_total = make_counter(
+    "simsys_forecast_requests_total",
+    "Forecast requests by ticker and outcome.",
+    labelnames=("ticker", "interval", "outcome"),
+)
+
+# Outcome enum is app-specific: e.g. {cache_hit, bad_request, upstream_error,
+# success, ...} for a forecasting API, or {dead, parked, active, deferred}
+# for a domain scanner.
+forecast_requests_total.labels(
+    ticker="AAPL", interval="1d", outcome="cache_hit"
+).inc()
+```
+
+Pair with `safe_label()` to cap cardinality on any dimension a user controls.
+
+## Cardinality rules
+
+- `route` is the route **template** (`/api/jobs/{id}`), never the actual path.
+- `status` is bucketed to class strings (`2xx`, `3xx`, `4xx`, `5xx`, `1xx`),
+  never the raw numeric code.
+- `outcome` on the job metrics is exactly one of `success` or `error`.
+- Any user-derived label value should pass through
+  `safe_label(value, allowed_set)` before being attached to a metric.
+- The package **refuses** at registration time to register any metric whose
+  name does not start with `simsys_`. Attempting so raises `ValueError`.
+
+## `commit` detection
+
+`simsys_build_info.commit` is resolved in this order:
+
+1. `SIMSYS_BUILD_COMMIT` environment variable (if set and non-empty).
+2. `git rev-parse --short HEAD` in the process's current working directory.
+3. Literal string `"unknown"` if neither is available.
+
+In container images, set `SIMSYS_BUILD_COMMIT` at build time:
+
+```dockerfile
+ARG GIT_COMMIT=unknown
+ENV SIMSYS_BUILD_COMMIT=${GIT_COMMIT}
+```
+
+and build with `docker build --build-arg GIT_COMMIT=$(git rev-parse --short HEAD) .`.
+
+## `/metrics` endpoint behaviour
+
+- Auto-mounted at `/metrics` on the same port as the app. No separate metrics
+  port.
+- Designed for direct scraping on a localhost or VPC interface — the package
+  itself adds no auth on the endpoint; gate it at the reverse proxy / network
+  layer if exposed publicly.
+- `app.state.simsys_exempt_paths` (FastAPI) and
+  `app.extensions["simsys_metrics"]` (Flask) expose the recommended
+  auth-exempt path set so upstream middleware can skip it without
+  hard-coding the list.
+
+## Development
+
+```bash
+git clone https://github.com/Avicennasis/simsys-metrics.git
+cd simsys-metrics
+python3 -m venv .venv && . .venv/bin/activate
+pip install -e '.[fastapi,flask,test]'
+
+pytest                           # 30 unit + integration tests
+bin/check-metrics-conformance.sh # end-to-end smoke test against the demo app
+```
+
+### Release flow
+
+1. Bump `version` in `pyproject.toml` and `simsys_metrics/__init__.py`.
+2. Add a `CHANGELOG.md` entry.
+3. Run `pytest` and `bin/check-metrics-conformance.sh` — both must be green.
+4. `git tag vX.Y.Z && git push --tags`.
+5. Consumers re-pin their install URL to the new tag.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Issues and PRs welcome — bug reports,
+metric-catalogue gaps, or new framework install paths (Starlette, Quart, etc.)
+all fair game. Security issues: see [SECURITY.md](SECURITY.md).
+
+By contributing you agree to the terms of the
+[Code of Conduct](CODE_OF_CONDUCT.md).
+
+## License
+
+[MIT](LICENSE). Use it anywhere, no attribution required, no warranty.
+
+## See also
+
+- **Upstream dependencies:**
+  [prometheus_client](https://github.com/prometheus/client_python),
+  [prometheus-fastapi-instrumentator](https://github.com/trallnag/prometheus-fastapi-instrumentator),
+  [psutil](https://github.com/giampaolo/psutil).
+- **Grafana dashboard template:** any operator-flavored Grafana dashboard that
+  templates over the `service` label will work; build it from the metric
+  catalogue above.
