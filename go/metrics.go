@@ -134,14 +134,9 @@ func Install(opts InstallOpts) (*Metrics, error) {
 
 	// Custom process collector reading /proc/self. Idempotent on the same
 	// registry: if Install was called before with this registry, reuse the
-	// existing collector rather than panicking on duplicate descriptors.
-	procCollector := newSimsysProcessCollector(opts.Service)
-	if err := reg.Register(procCollector); err != nil {
-		var alreadyErr prometheus.AlreadyRegisteredError
-		if !errors.As(err, &alreadyErr) {
-			return nil, err
-		}
-	}
+	// existing collector rather than panicking on duplicate descriptors or
+	// orphaning a freshly-built second-call collector.
+	registerOrExisting(reg, newSimsysProcessCollector(opts.Service))
 
 	// Set build_info to 1 with resolved labels.
 	commit := opts.Commit

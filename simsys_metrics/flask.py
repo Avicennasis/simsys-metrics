@@ -7,6 +7,7 @@ Uses ``prometheus_client`` directly — no third-party Flask exporter. A
 
 from __future__ import annotations
 
+import logging
 import time
 from typing import Optional
 
@@ -16,6 +17,8 @@ from ._baseline import set_service
 from ._http import http_request_duration_seconds, http_requests_total, status_bucket
 from ._process import register_process_collector
 from .build_info import register_build_info
+
+_log = logging.getLogger("simsys_metrics")
 
 EXEMPT_PATHS = frozenset({"/metrics", "/health", "/ready", "/healthz"})
 
@@ -37,18 +40,34 @@ def install_flask(
 
     # Idempotent: a second install_flask() on the same app is a no-op.
     app.extensions = getattr(app, "extensions", {}) or {}
-    if app.extensions.get("simsys_metrics", {}).get("installed"):
+    existing = app.extensions.get("simsys_metrics") or {}
+    if existing.get("installed"):
+        if (existing.get("service"), existing.get("version")) != (service, version):
+            _log.warning(
+                "simsys_metrics.install() called again on the same Flask app "
+                "with different service/version (%r/%r vs %r/%r); the new "
+                "values are IGNORED. To re-init, drop "
+                "app.extensions['simsys_metrics'] first.",
+                existing.get("service"),
+                existing.get("version"),
+                service,
+                version,
+            )
         return
+
+    # Set the extensions sentinel BEFORE side effects so a partial first
+    # install (subprocess timeout in build_info, etc.) doesn't leave the
+    # registry partially populated and re-entered on retry.
+    app.extensions["simsys_metrics"] = {
+        "service": service,
+        "version": version,
+        "exempt_paths": EXEMPT_PATHS,
+        "installed": True,
+    }
 
     set_service(service)
     register_process_collector(service)
     register_build_info(service=service, version=version, commit=commit)
-
-    app.extensions["simsys_metrics"] = {
-        "service": service,
-        "exempt_paths": EXEMPT_PATHS,
-        "installed": True,
-    }
 
     @app.before_request
     def _simsys_before():
@@ -57,36 +76,74 @@ def install_flask(
 
         g.simsys_start = time.perf_counter()
 
-    @app.after_request
-    def _simsys_after(response):
-        from flask import g
-
-        if request.path == metrics_path:
-            return response
-
-        start = getattr(g, "simsys_start", None)
-        # url_rule.rule is the template ("/items/<id>"); when no rule matched
-        # (404, exception path), fall back to a single bucket label so 404
-        # scanner traffic doesn't blow out cardinality.
-        rule = request.url_rule
-        route = rule.rule if rule is not None else "__unmatched__"
+    def _record(method: str, route: str, status: int, start) -> None:
+        """Emit one observation. Used by both after_request and the
+        got_request_exception handler so unhandled-exception 5xx are still
+        counted instead of vanishing silently."""
         http_requests_total.labels(
             service=service,
-            method=request.method,
+            method=method,
             route=route,
-            status=status_bucket(response.status_code),
+            status=status_bucket(status),
         ).inc()
-        # Skip the histogram observe when before_request never ran (mounted
+        # Skip the histogram observe when before_request never ran (early
         # error handlers, redirect chains): a 0.0 sample would skew the
         # smallest bucket.
         if start is not None:
             elapsed = time.perf_counter() - start
             http_request_duration_seconds.labels(
                 service=service,
-                method=request.method,
+                method=method,
                 route=route,
             ).observe(elapsed)
+
+    @app.after_request
+    def _simsys_after(response):
+        from flask import g
+
+        if request.path == metrics_path:
+            return response
+        # If got_request_exception already recorded this request (unhandled
+        # exception path that Flask still let through to after_request via an
+        # error handler), skip — counting twice would inflate the 5xx series.
+        if getattr(g, "simsys_recorded", False):
+            return response
+
+        # url_rule.rule is the template ("/items/<id>"); when no rule matched
+        # (404, exception path), fall back to a single bucket label so 404
+        # scanner traffic doesn't blow out cardinality.
+        rule = request.url_rule
+        route = rule.rule if rule is not None else "__unmatched__"
+        _record(
+            request.method,
+            route,
+            response.status_code,
+            getattr(g, "simsys_start", None),
+        )
+        g.simsys_recorded = True
         return response
+
+    # Flask invokes do_teardown_request (NOT after_request) for unhandled
+    # exceptions, so without this signal handler 5xx caused by uncaught
+    # exceptions would never be counted. Subscribe to got_request_exception
+    # which fires on the exception path BEFORE teardown.
+    from flask.signals import got_request_exception
+
+    def _simsys_on_exception(sender, exception, **_kwargs):
+        from flask import g
+
+        if request.path == metrics_path:
+            return
+        if getattr(g, "simsys_recorded", False):
+            return
+        rule = request.url_rule
+        route = rule.rule if rule is not None else "__unmatched__"
+        # Unhandled exception → status_bucket("5xx"). We pass 500 explicitly
+        # rather than reading response.status_code (no response object yet).
+        _record(request.method, route, 500, getattr(g, "simsys_start", None))
+        g.simsys_recorded = True
+
+    got_request_exception.connect(_simsys_on_exception, app)
 
     @app.route(metrics_path)
     def _simsys_metrics_view():

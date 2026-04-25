@@ -10,6 +10,7 @@ with auth middleware can skip it automatically.
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 from typing import Optional
@@ -18,6 +19,8 @@ from ._baseline import set_service
 from ._http import http_request_duration_seconds, http_requests_total, status_bucket
 from ._process import register_process_collector
 from .build_info import register_build_info
+
+_log = logging.getLogger("simsys_metrics")
 
 # Auth middleware on host apps can read this attribute on the app to decide
 # what to skip. Declaring it here lets consumers discover it without importing
@@ -63,9 +66,33 @@ def install_fastapi(
     # tests, plugins, and lazy app factories can call install() repeatedly
     # without doubling middleware or re-registering metrics.
     if getattr(app.state, "simsys_metrics_installed", False):
+        prior_service = getattr(app.state, "simsys_service", None)
+        prior_version = getattr(app.state, "simsys_version", None)
+        if (prior_service, prior_version) != (service, version):
+            _log.warning(
+                "simsys_metrics.install() called again on the same app with "
+                "different service/version (%r/%r vs %r/%r); the new values "
+                "are IGNORED. To re-init, drop app.state.simsys_metrics_installed "
+                "first.",
+                prior_service,
+                prior_version,
+                service,
+                version,
+            )
         return
 
     multiproc_dir = os.environ.get("PROMETHEUS_MULTIPROC_DIR")
+
+    # Set the sentinel BEFORE side effects so a partial first install (e.g.
+    # register_build_info raises mid-way) doesn't leave the registry partially
+    # populated AND let a retry re-run the full registration. Process collector
+    # registration is locked-singleton-safe and build_info is set-idempotent,
+    # so re-entering after a transient error is benign — but we want exactly
+    # one effective install per app, not "however many retries it took."
+    app.state.simsys_service = service
+    app.state.simsys_version = version
+    app.state.simsys_exempt_paths = EXEMPT_PATHS
+    app.state.simsys_metrics_installed = True
 
     set_service(service)
     # Skip the custom SimsysProcessCollector in multiproc mode: it reads the
@@ -75,10 +102,6 @@ def install_fastapi(
     if not multiproc_dir:
         register_process_collector(service)
     register_build_info(service=service, version=version, commit=commit)
-
-    app.state.simsys_service = service
-    app.state.simsys_exempt_paths = EXEMPT_PATHS
-    app.state.simsys_metrics_installed = True
 
     @app.middleware("http")
     async def _simsys_http_metrics(request: Request, call_next):

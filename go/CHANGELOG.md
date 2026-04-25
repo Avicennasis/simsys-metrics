@@ -5,6 +5,19 @@ All notable changes to `simsys-metrics-go` will be documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [go/v0.2.1] - 2026-04-25
+
+### Fixed
+- **`Install()` no longer orphans a process collector on second call.**
+  When the same `*prometheus.Registry` was passed to `Install` twice, the
+  second-call `simsysProcessCollector` was built but its registration
+  silently absorbed an `AlreadyRegisteredError` and the freshly-built
+  collector was never wired up — leaving an unreferenced object on the
+  heap. Now routed through the same `registerOrExisting` generic helper
+  used by `MakeCounter`/`MakeGauge`/`MakeHistogram`, so the existing
+  registered collector is reused. No user-visible behaviour change for
+  first-call installs.
+
 ## [go/v0.2.0] - 2026-04-25
 
 First public release of the Go sibling package. See the
@@ -30,4 +43,5 @@ notes:
 - `TrackQueue` panic recovery: a `depthFn` panic logs the first occurrence
   via `slog` and silently absorbs subsequent panics to avoid log floods.
 
+[go/v0.2.1]: https://github.com/Avicennasis/simsys-metrics/releases/tag/go/v0.2.1
 [go/v0.2.0]: https://github.com/Avicennasis/simsys-metrics/releases/tag/go/v0.2.0

@@ -224,6 +224,37 @@ ENV SIMSYS_BUILD_COMMIT=${GIT_COMMIT}
 
 and build with `docker build --build-arg GIT_COMMIT=$(git rev-parse --short HEAD) .`.
 
+## Multiprocess mode
+
+When running under gunicorn/uvicorn-with-workers, set
+`PROMETHEUS_MULTIPROC_DIR` so the worker processes write metric samples to
+a shared directory and `/metrics` aggregates them via
+`prometheus_client.MultiProcessCollector`. With the env var set,
+`install()` automatically:
+
+- Mounts a multiproc-aware `/metrics` route that walks the shared directory
+  on every scrape.
+- Skips registration of the per-process `simsys_process_*` collector
+  (`SimsysProcessCollector` reads `/proc/self` only and cannot meaningfully
+  aggregate across workers).
+- Tags `simsys_queue_depth` as `multiprocess_mode="livesum"` and
+  `simsys_build_info` as `multiprocess_mode="liveall"`.
+
+> **Important — env-var ordering:** `PROMETHEUS_MULTIPROC_DIR` is read at
+> `simsys_metrics` **import time** (so the gauges can be constructed with
+> the right `multiprocess_mode`). Set the env var in your Dockerfile / shell
+> / process-manager config before any Python code runs. Setting it after
+> importing — for example inside an app-factory function — leaves the
+> gauges constructed in single-process mode and `/metrics` aggregation
+> will silently fail.
+
+A typical Dockerfile:
+
+```dockerfile
+ENV PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus_multiproc
+RUN mkdir -p /tmp/prometheus_multiproc
+```
+
 ## `/metrics` endpoint behaviour
 
 - Auto-mounted at `/metrics` on the same port as the app. No separate metrics

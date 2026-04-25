@@ -5,6 +5,33 @@ All notable changes to `simsys-metrics` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] — 2026-04-25
+
+Patch release tightening `install()` semantics and Flask error-path
+observability based on a follow-up code review.
+
+### Fixed
+- **Flask: uncaught exceptions are now counted as 5xx.** Previously, an
+  unhandled exception escaped Flask's `after_request` hook entirely and
+  the request silently produced no metric sample at all — a real
+  observability gap on the error path. Now wired through
+  `got_request_exception` so the counter increments and the histogram
+  observes once-and-only-once even on the exception path.
+- **`install()` warns on service/version mismatch.** A second `install()`
+  on the same app with different `service=` / `version=` arguments
+  previously no-op'd silently. Now logs a clear warning and keeps the
+  original install — apps that legitimately want re-init must drop the
+  sentinel first.
+- **`install()` sets the sentinel before side effects.** A partial first
+  install (e.g. transient subprocess timeout in `git rev-parse`) no
+  longer leaves the registry in a half-populated state that a retry
+  would re-poison.
+
+### Documentation
+- README: new "Multiprocess mode" section. Documents the
+  `PROMETHEUS_MULTIPROC_DIR` env-var ordering requirement (must be set
+  before `simsys_metrics` is imported, not from inside an app factory).
+
 ## [0.3.0] — 2026-04-25
 
 First public release.
@@ -43,4 +70,5 @@ First public release.
 - pre-commit with ruff (lint + format).
 - OpenSSF Scorecard, build provenance attestation on Go releases.
 
+[0.3.1]: https://github.com/Avicennasis/simsys-metrics/releases/tag/v0.3.1
 [0.3.0]: https://github.com/Avicennasis/simsys-metrics/releases/tag/v0.3.0

@@ -240,9 +240,13 @@ and build with `docker build --build-arg GIT_COMMIT=$(git rev-parse --short HEAD
 
 ## Development
 
+The Node package lives under `node/` in the unified
+[`simsys-metrics`](https://github.com/Avicennasis/simsys-metrics) monorepo
+(shared with the Python and Go siblings).
+
 ```bash
-git clone https://github.com/Avicennasis/simsys-metrics-node.git
-cd simsys-metrics-node
+git clone https://github.com/Avicennasis/simsys-metrics.git
+cd simsys-metrics/node
 npm install
 
 npm run build    # tsc -> dist/
@@ -251,11 +255,12 @@ npm test         # vitest run
 
 ### Release flow
 
-1. Bump `version` in `package.json`.
-2. Add a `CHANGELOG.md` entry.
-3. `npm run build && npm test` — both must be green.
-4. `git tag vX.Y.Z`.
-5. Consumers re-pin their install URL to the new tag.
+1. Bump `version` in `node/package.json` and `node/CHANGELOG.md`.
+2. `npm run build && npm test` — both must be green.
+3. `git tag node-vX.Y.Z` (node-prefixed tag scheme; the Python sibling uses
+   bare `vX.Y.Z` and the Go sibling uses `go/vX.Y.Z`).
+4. `npm pack` to build the tarball, then attach it to a GitHub Release on
+   the `node-vX.Y.Z` tag — that's the install URL consumers pin to.
 
 ## License
 
