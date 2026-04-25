@@ -54,6 +54,7 @@ def install_fastapi(
     """
     from fastapi import FastAPI  # local import: fastapi is an optional extra
     from prometheus_fastapi_instrumentator import Instrumentator
+    from starlette.middleware.base import BaseHTTPMiddleware
     from starlette.requests import Request
     from starlette.responses import Response
 
@@ -116,37 +117,45 @@ def install_fastapi(
             del app.state.simsys_exempt_paths
         raise
 
-    @app.middleware("http")
-    async def _simsys_http_metrics(request: Request, call_next):
-        if request.url.path == metrics_path:
-            return await call_next(request)
-        start = time.perf_counter()
-        response: Optional[Response] = None
-        status_code = 500
-        try:
-            response = await call_next(request)
-            status_code = response.status_code
-            return response
-        finally:
-            elapsed = time.perf_counter() - start
-            # Route-template resolution: FastAPI stamps the matched route onto
-            # request.scope["route"]; its .path is the template (e.g. /items/{id}).
-            # When no route matched (404, OPTIONS pre-flight, exception path),
-            # fall back to a single bucket label to keep cardinality bounded.
-            route_obj = request.scope.get("route")
-            route = getattr(route_obj, "path", None) or "__unmatched__"
-            method = request.method
-            http_requests_total.labels(
-                service=service,
-                method=method,
-                route=route,
-                status=status_bucket(status_code),
-            ).inc()
-            http_request_duration_seconds.labels(
-                service=service,
-                method=method,
-                route=route,
-            ).observe(elapsed)
+    # Use a BaseHTTPMiddleware subclass via app.add_middleware() rather than
+    # the function-style @app.middleware("http") decorator. The decorator
+    # form is known to deadlock with starlette.testclient.TestClient under
+    # recent Starlette versions (0.51+); BaseHTTPMiddleware is the
+    # canonical, testable pattern.
+    class _SimsysHTTPMetrics(BaseHTTPMiddleware):
+        async def dispatch(self, request: Request, call_next):
+            if request.url.path == metrics_path:
+                return await call_next(request)
+            start = time.perf_counter()
+            response: Optional[Response] = None
+            status_code = 500
+            try:
+                response = await call_next(request)
+                status_code = response.status_code
+                return response
+            finally:
+                elapsed = time.perf_counter() - start
+                # Route-template resolution: FastAPI stamps the matched
+                # route onto request.scope["route"]; its .path is the
+                # template (e.g. /items/{id}). When no route matched (404,
+                # OPTIONS pre-flight, exception path), fall back to a
+                # single bucket label so cardinality stays bounded.
+                route_obj = request.scope.get("route")
+                route = getattr(route_obj, "path", None) or "__unmatched__"
+                method = request.method
+                http_requests_total.labels(
+                    service=service,
+                    method=method,
+                    route=route,
+                    status=status_bucket(status_code),
+                ).inc()
+                http_request_duration_seconds.labels(
+                    service=service,
+                    method=method,
+                    route=route,
+                ).observe(elapsed)
+
+    app.add_middleware(_SimsysHTTPMetrics)
 
     if multiproc_dir:
         # Multiproc mode: build a fresh registry, attach MultiProcessCollector

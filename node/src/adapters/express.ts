@@ -47,6 +47,28 @@ export function installExpress(
   const metricsPath = opts.metricsPath ?? "/metrics";
   const commit = opts.commit ?? detectCommit();
 
+  // Idempotent: a second install() on the same app is a no-op so tests,
+  // plugins, and lazy app factories can call install() repeatedly without
+  // doubling middleware (which would double-count every request) or
+  // mounting two /metrics routes.
+  app.locals = app.locals ?? {};
+  if (app.locals.simsysMetricsInstalled) {
+    if (
+      app.locals.simsysService !== service ||
+      app.locals.simsysVersion !== version
+    ) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[simsys-metrics] install() called again on the same Express app ` +
+          `with different service/version (${app.locals.simsysService}/` +
+          `${app.locals.simsysVersion} vs ${service}/${version}); the new ` +
+          `values are IGNORED. To re-init, drop ` +
+          `app.locals.simsysMetricsInstalled first.`,
+      );
+    }
+    return app;
+  }
+
   setService(service);
   registerProcessCollector(service);
   registerNodeDefaultMetrics(service);
@@ -61,9 +83,10 @@ export function installExpress(
 
   // Expose the exempt-path set so upstream auth middleware can skip them
   // without hard-coding the list.
-  app.locals = app.locals ?? {};
   app.locals.simsysExemptPaths = EXEMPT_PATHS;
   app.locals.simsysService = service;
+  app.locals.simsysVersion = version;
+  app.locals.simsysMetricsInstalled = true;
 
   // Metrics endpoint. Register FIRST so it wins over any catch-all middleware
   // installed later; the HTTP-recording middleware below checks the path and

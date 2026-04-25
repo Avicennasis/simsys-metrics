@@ -5,6 +5,34 @@ All notable changes to `simsys-metrics` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.3] — 2026-04-25
+
+Patch release addressing findings from a follow-up audit.
+
+### Fixed
+- **`@track_job` now correctly times async functions.** The previous
+  decorator wrapped only sync callables: passing an async function
+  worked at the type level but exited the timing span as soon as the
+  coroutine OBJECT was returned (before it ran). Async exceptions were
+  silently misrecorded as `outcome="success"`. The decorator now
+  detects coroutine functions via `asyncio.iscoroutinefunction` and
+  emits an async-aware wrapper that awaits the coroutine inside the
+  span. Backed by `tests/test_track_job.py` (success + error cases).
+- **FastAPI middleware migrated from function-style decorator to
+  `BaseHTTPMiddleware`.** `@app.middleware("http")` is brittle under
+  recent Starlette versions (0.51+) — the `TestClient` can deadlock
+  on the call_next path. Switched to a `BaseHTTPMiddleware` subclass
+  registered via `app.add_middleware()`, the canonical and testable
+  pattern. No behavior change for the happy path; metrics still
+  carry the same labels.
+
+### Hardening
+- pytest suite now runs under `pytest-timeout` with a 30-second
+  per-test cap (`addopts = --timeout=30`), so a future hang fails
+  fast instead of holding CI indefinitely.
+- `pytest-timeout>=2.3` added to the `[test]` extra in
+  `pyproject.toml`.
+
 ## [0.3.2] — 2026-04-25
 
 Patch release closing a regression in v0.3.1's install-sentinel ordering
@@ -103,6 +131,7 @@ First public release.
 - pre-commit with ruff (lint + format).
 - OpenSSF Scorecard, build provenance attestation on Go releases.
 
+[0.3.3]: https://github.com/Avicennasis/simsys-metrics/releases/tag/v0.3.3
 [0.3.2]: https://github.com/Avicennasis/simsys-metrics/releases/tag/v0.3.2
 [0.3.1]: https://github.com/Avicennasis/simsys-metrics/releases/tag/v0.3.1
 [0.3.0]: https://github.com/Avicennasis/simsys-metrics/releases/tag/v0.3.0

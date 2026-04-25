@@ -28,8 +28,10 @@ coverage/
 # TypeScript build caches
 *.tsbuildinfo
 
-# Package manager locks (single source of truth preference: none pinned here)
-package-lock.json
+# Lockfiles for ALTERNATE package managers — we ship npm's lockfile only.
+# package-lock.json IS tracked: it's the source of truth for `npm ci` in
+# CI (.github/workflows/test-node.yml) and for reproducible installs of
+# the published package.
 yarn.lock
 pnpm-lock.yaml
 bun.lockb

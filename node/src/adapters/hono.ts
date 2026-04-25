@@ -42,6 +42,30 @@ export function installHono(app: HonoLike, opts: HonoInstallOpts): HonoLike {
   const metricsPath = opts.metricsPath ?? "/metrics";
   const commit = opts.commit ?? detectCommit();
 
+  // Idempotent: a second install() on the same Hono app is a no-op.
+  // Without this guard a second install would add a second wildcard
+  // middleware (request counted twice) plus a second /metrics route
+  // (Hono returns the LAST handler that matched, so the second one
+  // would shadow the first — but the duplicate middleware is the real
+  // cardinality bug).
+  const appProps = app as Record<string | symbol, unknown>;
+  if (appProps.simsysMetricsInstalled) {
+    if (
+      appProps.simsysService !== service ||
+      appProps.simsysVersion !== version
+    ) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[simsys-metrics] install() called again on the same Hono app ` +
+          `with different service/version (${String(appProps.simsysService)}/` +
+          `${String(appProps.simsysVersion)} vs ${service}/${version}); the ` +
+          `new values are IGNORED. To re-init, drop ` +
+          `app.simsysMetricsInstalled first.`,
+      );
+    }
+    return app;
+  }
+
   setService(service);
   registerProcessCollector(service);
   registerNodeDefaultMetrics(service);
@@ -58,8 +82,10 @@ export function installHono(app: HonoLike, opts: HonoInstallOpts): HonoLike {
   // doesn't have per-app `locals`, but it does have context.set on each
   // request. For discovery we attach it to a symbol-keyed property on the app
   // instance itself.
-  (app as Record<string | symbol, unknown>).simsysExemptPaths = EXEMPT_PATHS;
-  (app as Record<string | symbol, unknown>).simsysService = service;
+  appProps.simsysExemptPaths = EXEMPT_PATHS;
+  appProps.simsysService = service;
+  appProps.simsysVersion = version;
+  appProps.simsysMetricsInstalled = true;
 
   // Middleware for HTTP request metrics — registered BEFORE the /metrics
   // handler so ordering is: mw -> [route handlers, including /metrics].

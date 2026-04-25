@@ -1,0 +1,77 @@
+name: Node CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "node/**"
+      - ".github/workflows/test-node.yml"
+  pull_request:
+    paths:
+      - "node/**"
+      - ".github/workflows/test-node.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (Node ${{ matrix.node-version }})
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: node
+    strategy:
+      fail-fast: false
+      # Library's "engines" claim is node>=18 (no Node 20+ APIs used), but
+      # vitest@4 (dev dep) requires node>=20 to RUN the test suite. CI runs
+      # the suite on 20/22/24; the package itself still works on Node 18
+      # for consumers. The build-only job below verifies that explicitly.
+      matrix:
+        node-version: ["20", "22", "24"]
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+          cache-dependency-path: node/package-lock.json
+
+      - name: Install dependencies (locked)
+        run: npm ci
+
+      - name: TypeScript build
+        run: npm run build
+
+      - name: Run vitest
+        run: npm test
+
+      - name: Pack tarball (smoke test)
+        run: npm pack --dry-run
+
+  build-node18:
+    name: build-only (Node 18 — engines floor)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: node
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "18"
+          cache: npm
+          cache-dependency-path: node/package-lock.json
+
+      # vitest@4 won't run on Node 18 (it requires Node 20+), but the
+      # library itself uses no Node 20+ APIs. Verify the TypeScript build
+      # still succeeds on 18 so the "engines: node>=18" claim is enforced.
+      # `--ignore-scripts` skips prepublishOnly which would invoke vitest.
+      - name: Install dependencies (production-only)
+        run: npm ci --ignore-scripts
+
+      - name: TypeScript build (Node 18 floor)
+        run: npm run build

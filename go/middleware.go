@@ -34,6 +34,25 @@ type MiddlewareOpts struct {
 	MetricsPath string
 }
 
+// recordRequest emits one HTTP-request observation. Extracted so the
+// happy path and the panic-recovery path can share the labelling logic
+// without subtle drift.
+func recordRequest(m *Metrics, r *http.Request, extractor RouteExtractor, status int, start time.Time) {
+	elapsed := time.Since(start).Seconds()
+	route := UnmatchedRouteLabel
+	if extractor != nil {
+		if tmpl := extractor(r); tmpl != "" {
+			route = tmpl
+		}
+	}
+	m.httpRequestsTotal.WithLabelValues(
+		m.service, r.Method, route, StatusBucket(status),
+	).Inc()
+	m.httpRequestDurationSeconds.WithLabelValues(
+		m.service, r.Method, route,
+	).Observe(elapsed)
+}
+
 // Middleware returns an http.Handler wrapper that records
 // simsys_http_requests_total + simsys_http_request_duration_seconds
 // on every request. Usage:
@@ -57,19 +76,19 @@ func (m *Metrics) Middleware(opts MiddlewareOpts) func(http.Handler) http.Handle
 			start := time.Now()
 			wrapped := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 			defer func() {
-				elapsed := time.Since(start).Seconds()
-				route := UnmatchedRouteLabel
-				if opts.Extractor != nil {
-					if tmpl := opts.Extractor(r); tmpl != "" {
-						route = tmpl
+				// Panic recovery: if next.ServeHTTP panicked before
+				// writing a status, the default 200 in statusRecorder
+				// would mislabel the request as 2xx. Mark it as 5xx,
+				// emit the metric, then re-panic so net/http's default
+				// recover-and-log + connection-close logic still runs.
+				if rec := recover(); rec != nil {
+					if !wrapped.written {
+						wrapped.status = http.StatusInternalServerError
 					}
+					recordRequest(m, r, opts.Extractor, wrapped.status, start)
+					panic(rec)
 				}
-				m.httpRequestsTotal.WithLabelValues(
-					m.service, r.Method, route, StatusBucket(wrapped.status),
-				).Inc()
-				m.httpRequestDurationSeconds.WithLabelValues(
-					m.service, r.Method, route,
-				).Observe(elapsed)
+				recordRequest(m, r, opts.Extractor, wrapped.status, start)
 			}()
 			next.ServeHTTP(wrapped, r)
 		})

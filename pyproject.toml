@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "simsys-metrics"
-version = "0.3.2"
+version = "0.3.3"
 description = "Drop-in Prometheus /metrics template for FastAPI and Flask web apps. One install() call; consistent simsys_* metric catalogue; optional queue/job/progress helpers."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -38,6 +38,7 @@ flask = [
 test = [
   "pytest>=7.4",
   "pytest-cov>=4.1",
+  "pytest-timeout>=2.3",
   "httpx>=0.25",
   "fastapi>=0.100",
   "prometheus-fastapi-instrumentator>=7.0",
@@ -58,5 +59,10 @@ packages = ["simsys_metrics"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra --strict-markers"
+addopts = "-ra --strict-markers --timeout=30"
 filterwarnings = ["ignore::DeprecationWarning"]
+# Per-test timeout cap. Prevents a hanging test (e.g. a regression in
+# Starlette TestClient deadlocking on middleware) from holding CI
+# indefinitely.
+timeout = 30
+timeout_method = "thread"

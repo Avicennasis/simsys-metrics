@@ -16,6 +16,7 @@ code never has to pass ``service=`` at every call site.
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import logging
 import os
@@ -142,12 +143,30 @@ def _job_span(job: str):
 def track_job(job: str):
     """Decorator: time a function and record it as a ``job`` metric.
 
+    Works on both sync and async functions:
+    - For sync ``def fn(...)``, the timing span wraps the call.
+    - For ``async def fn(...)``, the timing span wraps the awaited
+      coroutine — exceptions raised AFTER the function returns its
+      coroutine are correctly attributed to ``outcome="error"`` (the
+      previous sync-only wrapper exited the span when the coroutine was
+      returned, before it ran, so async failures were misrecorded as
+      ``outcome="success"``).
+
     Also usable as a context manager via ``with track_job("x"):`` — detected
     by the presence of ``__enter__``.
     """
 
     class _Tracker:
         def __call__(self, fn):
+            if asyncio.iscoroutinefunction(fn):
+
+                @functools.wraps(fn)
+                async def async_wrapper(*args, **kwargs):
+                    with _job_span(job):
+                        return await fn(*args, **kwargs)
+
+                return async_wrapper
+
             @functools.wraps(fn)
             def wrapper(*args, **kwargs):
                 with _job_span(job):

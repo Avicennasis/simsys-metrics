@@ -5,6 +5,23 @@ All notable changes to `simsys-metrics-go` will be documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [go/v0.2.3] - 2026-04-25
+
+### Fixed
+- **Handler panics are now correctly recorded as 5xx.** Previously, if
+  a handler panicked before calling `WriteHeader`, the `statusRecorder`
+  default of `http.StatusOK` (200) was emitted as the metric label,
+  the panic bypassed the deferred labeller, and the request was
+  counted as a successful 2xx. The middleware now `recover()`s the
+  panic, sets `wrapped.status` to `500` if no status was written,
+  emits the metric with `status="5xx"`, and re-panics so net/http's
+  default recovery (log + close connection) still runs. If the
+  handler had already written an explicit status (e.g. 400) before
+  panicking, that status is preserved. Backed by
+  `go/middleware_panic_test.go`.
+- Refactored shared labelling logic into `recordRequest()` so the
+  happy path and the panic-recovery path can't drift apart.
+
 ## [go/v0.2.2] - 2026-04-25
 
 ### Added
@@ -59,6 +76,7 @@ notes:
 - `TrackQueue` panic recovery: a `depthFn` panic logs the first occurrence
   via `slog` and silently absorbs subsequent panics to avoid log floods.
 
+[go/v0.2.3]: https://github.com/Avicennasis/simsys-metrics/releases/tag/go/v0.2.3
 [go/v0.2.2]: https://github.com/Avicennasis/simsys-metrics/releases/tag/go/v0.2.2
 [go/v0.2.1]: https://github.com/Avicennasis/simsys-metrics/releases/tag/go/v0.2.1
 [go/v0.2.0]: https://github.com/Avicennasis/simsys-metrics/releases/tag/go/v0.2.0
