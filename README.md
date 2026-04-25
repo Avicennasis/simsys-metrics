@@ -1,6 +1,6 @@
 # simsys-metrics
 
-> A drop-in Prometheus `/metrics` template for Python and Node.js web apps. One `install()` call; consistent metric catalogue; zero-per-app dashboard work.
+> A drop-in Prometheus `/metrics` template for Python, Node.js, and Go web apps. One `install()` call; consistent metric catalogue; zero-per-app dashboard work.
 
 [![CI](https://github.com/Avicennasis/simsys-metrics/actions/workflows/test.yml/badge.svg)](https://github.com/Avicennasis/simsys-metrics/actions/workflows/test.yml)
 [![codecov](https://codecov.io/gh/Avicennasis/simsys-metrics/branch/main/graph/badge.svg)](https://codecov.io/gh/Avicennasis/simsys-metrics)
@@ -11,6 +11,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-supported-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![Flask](https://img.shields.io/badge/Flask-supported-000000.svg?logo=flask&logoColor=white)](https://flask.palletsprojects.com/)
 [![Node.js](https://img.shields.io/badge/Node.js-supported-339933.svg?logo=node.js&logoColor=white)](node/)
+[![Go](https://img.shields.io/badge/Go-supported-00ADD8.svg?logo=go&logoColor=white)](go/)
 [![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit)](https://github.com/pre-commit/pre-commit)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
@@ -19,14 +20,17 @@
 
 ## Monorepo layout
 
-This repository ships **two packages** sharing one metric catalogue:
+This repository ships **three packages** sharing one metric catalogue, label
+conventions, and cardinality rules — so a single `$service`-templated
+Grafana dashboard works across every runtime:
 
-| Package | Path | Languages | Tag prefix |
-|---------|------|-----------|------------|
-| `simsys-metrics` (Python) | `/` (root) | FastAPI, Flask | `v<semver>` (e.g. `v0.3.0`) |
-| [`@simsys/metrics` (Node)](node/) | `node/` | Express 5, Bun + Hono | `node-v<semver>` (e.g. `node-v0.3.0`) |
+| Package | Path | Languages | Tag prefix | Install |
+|---------|------|-----------|------------|---------|
+| `simsys-metrics` (Python) | `/` (root) | FastAPI, Flask | `v<semver>` (e.g. `v0.3.4`) | `pip install ... @ git+https://...@v0.3.4` |
+| [`@simsys/metrics` (Node)](node/) | `node/` | Express 5, Bun + Hono | `node-v<semver>` (e.g. `node-v0.3.4`) | GitHub Release tarball URL |
+| [`simsys-metrics-go`](go/) | `go/` | net/http | `go/v<semver>` (e.g. `go/v0.2.4`) | `go get ...@v0.2.4` |
 
-The Python package remains at the repo root for pip git-install compatibility. The Node package lives under [`node/`](node/) — consumers install via a GitHub Release tarball URL (see `node/README.md`).
+The Python package remains at the repo root for pip git-install compatibility. The Node and Go packages live under [`node/`](node/) and [`go/`](go/) respectively — see each subdirectory's README for install details.
 
 ---
 
@@ -62,10 +66,10 @@ up automatically.
 
 ```bash
 # FastAPI service
-pip install "simsys-metrics[fastapi] @ git+https://github.com/Avicennasis/simsys-metrics.git@v0.3.0"
+pip install "simsys-metrics[fastapi] @ git+https://github.com/Avicennasis/simsys-metrics.git@v0.3.4"
 
 # Flask service
-pip install "simsys-metrics[flask] @ git+https://github.com/Avicennasis/simsys-metrics.git@v0.3.0"
+pip install "simsys-metrics[flask] @ git+https://github.com/Avicennasis/simsys-metrics.git@v0.3.4"
 ```
 
 Pin to the tag. Bumping a consumer means re-pointing this URL at a newer tag.
@@ -74,7 +78,7 @@ Pin to the tag. Bumping a consumer means re-pointing this URL at a newer tag.
 <summary>Pinning in <code>requirements.txt</code></summary>
 
 ```
-simsys-metrics[fastapi] @ git+https://github.com/Avicennasis/simsys-metrics.git@v0.3.0
+simsys-metrics[fastapi] @ git+https://github.com/Avicennasis/simsys-metrics.git@v0.3.4
 ```
 
 Works in plain Docker builds — no SSH agent, no auth tokens required.

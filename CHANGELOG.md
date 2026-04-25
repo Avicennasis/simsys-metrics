@@ -5,6 +5,22 @@ All notable changes to `simsys-metrics` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.4] — 2026-04-25
+
+Documentation-only release. No code changes.
+
+### Documentation
+- Root `README.md` now describes the monorepo as **three** packages
+  (Python + Node + Go), with a Go badge and a Go row in the layout
+  table. Previously read "two packages" with no Go mention.
+- Python install snippets in `README.md` bumped from the stale `v0.3.0`
+  pin to the current `v0.3.4` (was missing every fix from v0.3.1
+  through v0.3.3 — install idempotency, async track_job, partial-
+  failure rollback, etc.).
+- `go/README.md` install snippet bumped from `go/v0.2.0` to `v0.2.4`,
+  and a note added clarifying the `go get` version-arg syntax (drops
+  the `go/` tag prefix because the module path already ends in `/go`).
+
 ## [0.3.3] — 2026-04-25
 
 Patch release addressing findings from a follow-up audit.
@@ -131,6 +147,7 @@ First public release.
 - pre-commit with ruff (lint + format).
 - OpenSSF Scorecard, build provenance attestation on Go releases.
 
+[0.3.4]: https://github.com/Avicennasis/simsys-metrics/releases/tag/v0.3.4
 [0.3.3]: https://github.com/Avicennasis/simsys-metrics/releases/tag/v0.3.3
 [0.3.2]: https://github.com/Avicennasis/simsys-metrics/releases/tag/v0.3.2
 [0.3.1]: https://github.com/Avicennasis/simsys-metrics/releases/tag/v0.3.1

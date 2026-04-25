@@ -5,6 +5,16 @@ All notable changes to `simsys-metrics-go` will be documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [go/v0.2.4] - 2026-04-25
+
+### Documentation
+- README install snippet bumped from `go/v0.2.0` to `v0.2.4`. Added a
+  note clarifying that the `go get` version arg drops the `go/` tag
+  prefix (the module path already ends in `/go`, so the Go module
+  resolver expects `@v0.2.4` not `@go/v0.2.4`).
+
+No code changes.
+
 ## [go/v0.2.3] - 2026-04-25
 
 ### Fixed
@@ -76,6 +86,7 @@ notes:
 - `TrackQueue` panic recovery: a `depthFn` panic logs the first occurrence
   via `slog` and silently absorbs subsequent panics to avoid log floods.
 
+[go/v0.2.4]: https://github.com/Avicennasis/simsys-metrics/releases/tag/go/v0.2.4
 [go/v0.2.3]: https://github.com/Avicennasis/simsys-metrics/releases/tag/go/v0.2.3
 [go/v0.2.2]: https://github.com/Avicennasis/simsys-metrics/releases/tag/go/v0.2.2
 [go/v0.2.1]: https://github.com/Avicennasis/simsys-metrics/releases/tag/go/v0.2.1

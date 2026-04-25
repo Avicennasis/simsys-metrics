@@ -16,8 +16,12 @@ go get github.com/Avicennasis/simsys-metrics/go@latest
 Pin to a specific release:
 
 ```bash
-go get github.com/Avicennasis/simsys-metrics/go@go/v0.2.0
+go get github.com/Avicennasis/simsys-metrics/go@v0.2.4
 ```
+
+Note: the GitHub release tag is named `go/vX.Y.Z` (per Go's
+sub-module tagging scheme), but the `go get` version arg drops the
+`go/` prefix — the module path already ends in `/go`.
 
 ## Usage
 
