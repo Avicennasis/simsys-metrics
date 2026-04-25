@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"net/http/httptest"
-	"strings"
 	"sync/atomic"
 	"testing"
 )
@@ -49,17 +48,4 @@ func scrapeMetrics(t *testing.T, m *Metrics) string {
 		t.Fatalf("read body: %v", err)
 	}
 	return string(body)
-}
-
-// hasLine returns true if body contains a non-comment line starting with name.
-func hasLine(body, name string) bool {
-	for _, line := range strings.Split(body, "\n") {
-		if strings.HasPrefix(line, "#") {
-			continue
-		}
-		if strings.HasPrefix(line, name) {
-			return true
-		}
-	}
-	return false
 }

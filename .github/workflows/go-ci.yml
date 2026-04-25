@@ -36,7 +36,11 @@ jobs:
 
       - name: go test (race detector + coverage)
         working-directory: go
-        run: go test -race -coverprofile=coverage.out ./...
+        # Exclude examples/ — they're package main demos; combining them with
+        # -coverprofile=./... triggers `go: no such tool "covdata"` failure.
+        run: |
+          PKGS=$(go list ./... | grep -v /examples/ | tr '\n' ' ')
+          go test -race -coverprofile=coverage.out $PKGS
 
       - name: Coverage summary
         working-directory: go
