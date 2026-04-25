@@ -195,4 +195,26 @@ describe("trackProgress", () => {
       t.stop();
     }
   });
+
+  it("rejects NaN / Infinity / -Infinity intervals", () => {
+    // NaN passes `<= 0` vacuously; Node's setInterval clamps Infinity
+    // down to a 1ms timer with TimeoutOverflowWarning, recreating the
+    // hot-loop bug intervalMs validation was supposed to prevent.
+    setService("prog_test_nonfinite");
+    expect(() =>
+      trackProgress({ operation: "x", total: 1, intervalMs: NaN }),
+    ).toThrow(/positive finite number/);
+    expect(() =>
+      trackProgress({ operation: "x", total: 1, intervalMs: Infinity }),
+    ).toThrow(/positive finite number/);
+    expect(() =>
+      trackProgress({ operation: "x", total: 1, intervalMs: -Infinity }),
+    ).toThrow(/positive finite number/);
+    expect(() =>
+      trackProgress({ operation: "x", total: 1, windowMs: NaN }),
+    ).toThrow(/positive finite number/);
+    expect(() =>
+      trackProgress({ operation: "x", total: 1, windowMs: Infinity }),
+    ).toThrow(/positive finite number/);
+  });
 });

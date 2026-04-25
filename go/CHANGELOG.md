@@ -5,6 +5,17 @@ All notable changes to `simsys-metrics-go` will be documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [go/v0.2.7] — 2026-04-25
+
+### Changed
+- `MakeCounter` / `MakeGauge` / `MakeHistogram` now log a one-time
+  `slog.Warn` at registration time when `"service"` is missing from
+  the labels slice. Custom metrics without a `service` label can't
+  participate in cross-service `$service` Grafana dashboards; the
+  warning makes the omission visible without erroring (consumer code
+  that legitimately doesn't need `service` is not broken). Backed by
+  `TestMakeCounterWarnsWhenServiceLabelMissing`.
+
 ## [go/v0.2.6] — 2026-04-25
 
 ### Fixed
@@ -125,6 +136,7 @@ notes:
 - `TrackQueue` panic recovery: a `depthFn` panic logs the first occurrence
   via `slog` and silently absorbs subsequent panics to avoid log floods.
 
+[go/v0.2.7]: https://github.com/Avicennasis/simsys-metrics/releases/tag/go/v0.2.7
 [go/v0.2.6]: https://github.com/Avicennasis/simsys-metrics/releases/tag/go/v0.2.6
 [go/v0.2.5]: https://github.com/Avicennasis/simsys-metrics/releases/tag/go/v0.2.5
 [go/v0.2.4]: https://github.com/Avicennasis/simsys-metrics/releases/tag/go/v0.2.4

@@ -32,11 +32,35 @@ function guardName(name: string): string {
   return name;
 }
 
+// Tracks metric names we've already warned about, to keep the warning
+// to once per process rather than spamming on every registration call.
+const warnedMissingService = new Set<string>();
+
+/**
+ * Warn (don't error) when a custom metric's labelNames omit "service".
+ * The shared $service-templated Grafana dashboards filter on the
+ * service label; metrics without it can't participate in the
+ * cross-service contract.
+ */
+function warnIfMissingService(name: string, labelNames: readonly string[]): void {
+  if (labelNames.includes("service")) return;
+  if (warnedMissingService.has(name)) return;
+  warnedMissingService.add(name);
+  // eslint-disable-next-line no-console
+  console.warn(
+    `[simsys-metrics] metric "${name}" registered without 'service' in ` +
+      `labelNames=[${labelNames.join(", ")}] — it will NOT participate in ` +
+      `$service-templated dashboards. Add 'service' to labelNames if you ` +
+      `want cross-service queries to work for this metric.`,
+  );
+}
+
 export function makeCounter(
   name: string,
   help: string,
   labelNames: readonly string[] = [],
 ): Counter {
+  warnIfMissingService(name, labelNames);
   return new Counter({
     name: guardName(name),
     help,
@@ -50,6 +74,7 @@ export function makeGauge(
   help: string,
   labelNames: readonly string[] = [],
 ): Gauge {
+  warnIfMissingService(name, labelNames);
   return new Gauge({
     name: guardName(name),
     help,
@@ -64,6 +89,7 @@ export function makeHistogram(
   labelNames: readonly string[] = [],
   buckets?: readonly number[],
 ): Histogram {
+  warnIfMissingService(name, labelNames);
   return new Histogram({
     name: guardName(name),
     help,

@@ -26,9 +26,9 @@ Grafana dashboard works across every runtime:
 
 | Package | Path | Languages | Tag prefix | Install |
 |---------|------|-----------|------------|---------|
-| `simsys-metrics` (Python) | `/` (root) | FastAPI, Flask | `v<semver>` (e.g. `v0.3.6`) | `pip install ... @ git+https://...@v0.3.6` |
-| [`@simsys/metrics` (Node)](node/) | `node/` | Express 5, Bun + Hono | `node-v<semver>` (e.g. `node-v0.3.6`) | GitHub Release tarball URL |
-| [`simsys-metrics-go`](go/) | `go/` | net/http | `go/v<semver>` (e.g. `go/v0.2.6`) | `go get ...@v0.2.6` |
+| `simsys-metrics` (Python) | `/` (root) | FastAPI, Flask | `v<semver>` (e.g. `v0.3.7`) | `pip install ... @ git+https://...@v0.3.7` |
+| [`@simsys/metrics` (Node)](node/) | `node/` | Express 5, Bun + Hono | `node-v<semver>` (e.g. `node-v0.3.7`) | GitHub Release tarball URL |
+| [`simsys-metrics-go`](go/) | `go/` | net/http | `go/v<semver>` (e.g. `go/v0.2.7`) | `go get ...@v0.2.7` |
 
 The Python package remains at the repo root for pip git-install compatibility. The Node and Go packages live under [`node/`](node/) and [`go/`](go/) respectively — see each subdirectory's README for install details.
 
@@ -66,10 +66,10 @@ up automatically.
 
 ```bash
 # FastAPI service
-pip install "simsys-metrics[fastapi] @ git+https://github.com/Avicennasis/simsys-metrics.git@v0.3.6"
+pip install "simsys-metrics[fastapi] @ git+https://github.com/Avicennasis/simsys-metrics.git@v0.3.7"
 
 # Flask service
-pip install "simsys-metrics[flask] @ git+https://github.com/Avicennasis/simsys-metrics.git@v0.3.6"
+pip install "simsys-metrics[flask] @ git+https://github.com/Avicennasis/simsys-metrics.git@v0.3.7"
 ```
 
 Pin to the tag. Bumping a consumer means re-pointing this URL at a newer tag.
@@ -78,7 +78,7 @@ Pin to the tag. Bumping a consumer means re-pointing this URL at a newer tag.
 <summary>Pinning in <code>requirements.txt</code></summary>
 
 ```
-simsys-metrics[fastapi] @ git+https://github.com/Avicennasis/simsys-metrics.git@v0.3.6
+simsys-metrics[fastapi] @ git+https://github.com/Avicennasis/simsys-metrics.git@v0.3.7
 ```
 
 Works in plain Docker builds — no SSH agent, no auth tokens required.
@@ -152,9 +152,18 @@ device IDs, free-form search terms) before it ends up as a Prometheus label.
 
 ## Metric catalogue
 
-Every metric uses the `simsys_` prefix and a `service` label, so cross-service
-PromQL like `sum by (service) (rate(simsys_http_requests_total[5m]))` works
+Every **baseline + opt-in** metric this package emits uses the `simsys_`
+prefix AND a `service` label — so cross-service PromQL like
+`sum by (service) (rate(simsys_http_requests_total[5m]))` works
 unmodified across every app.
+
+> **Custom metrics convention:** the `make_counter` / `make_gauge` /
+> `make_histogram` factories enforce the `simsys_` prefix but do
+> **not** force `service` into your label list. To stay compatible
+> with the cross-service dashboards above, include `service` in
+> `labelnames` for any custom metric you create. The factories will
+> warn at registration time if `service` is missing — see the example
+> in [Rich outcome taxonomies](#rich-outcome-taxonomies) below.
 
 | Metric | Type | Labels | Source |
 |---|---|---|---|
@@ -206,8 +215,17 @@ from simsys_metrics._registry import make_counter
 forecast_requests_total = make_counter(
     "simsys_forecast_requests_total",
     "Forecast requests by ticker and outcome.",
-    labelnames=("ticker", "interval", "outcome"),
+    # Always include `service` in labelnames — it's what the shared
+    # `$service`-templated Grafana dashboards filter on. Omitting it
+    # prints a warning at registration time and breaks the dashboard
+    # contract for this metric.
+    labelnames=("service", "ticker", "interval", "outcome"),
 )
+# At call sites, pass service= explicitly (use simsys_metrics.get_service()
+# if you don't already have it threaded through):
+# forecast_requests_total.labels(
+#     service="my-api", ticker="AAPL", interval="1d", outcome="cache_hit"
+# ).inc()
 
 # Outcome enum is app-specific: e.g. {cache_hit, bad_request, upstream_error,
 # success, ...} for a forecasting API, or {dead, parked, active, deferred}

@@ -63,9 +63,19 @@ export function trackProgress(opts: ProgressOpts): ProgressTracker {
   }
   const windowMs = opts.windowMs ?? 5000;
   const intervalMs = opts.intervalMs ?? 5000;
-  if (windowMs <= 0 || intervalMs <= 0) {
+  // Reject NaN / +Infinity / -Infinity / non-numeric:
+  // - NaN passes `<= 0` vacuously and would propagate into rate math
+  // - Infinity is clamped by Node's setInterval to a 1ms hot loop
+  //   (with TimeoutOverflowWarning) — recreating the bug intervalMs
+  //   validation was supposed to prevent.
+  if (!Number.isFinite(windowMs) || windowMs <= 0) {
     throw new Error(
-      "trackProgress: opts.windowMs and opts.intervalMs must be > 0",
+      `trackProgress: opts.windowMs must be a positive finite number of milliseconds, got ${String(windowMs)}`,
+    );
+  }
+  if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
+    throw new Error(
+      `trackProgress: opts.intervalMs must be a positive finite number of milliseconds, got ${String(intervalMs)}`,
     );
   }
 

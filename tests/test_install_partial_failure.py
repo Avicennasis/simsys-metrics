@@ -162,3 +162,72 @@ def test_flask_install_late_route_failure_clears_sentinel(monkeypatch):
     install(app, service="late_flask", version="0.0.1")
     assert app.extensions["simsys_metrics"]["installed"] is True
     assert call_count["n"] == 2
+
+
+def test_fastapi_partial_failure_does_not_double_stack_middleware(monkeypatch):
+    """Regression: if install_fastapi() got past app.add_middleware() and
+    then failed (e.g. Instrumentator.expose raised), the rollback must
+    truncate the middleware list. Otherwise a retry adds a SECOND
+    metrics middleware and every request gets counted twice.
+    """
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from prometheus_fastapi_instrumentator import Instrumentator
+
+    from simsys_metrics import install
+
+    app = FastAPI()
+
+    # Force Instrumentator.expose to raise on the first attempt only.
+    real_expose = Instrumentator.expose
+    call_count = {"n": 0}
+
+    def flaky_expose(self, *args, **kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            raise RuntimeError("forced expose failure")
+        return real_expose(self, *args, **kwargs)
+
+    monkeypatch.setattr(Instrumentator, "expose", flaky_expose)
+
+    pre_count = len(app.user_middleware)
+
+    with pytest.raises(RuntimeError, match="forced expose failure"):
+        install(app, service="dbl_stack_test", version="0.0.1")
+
+    # Middleware added during the failed attempt MUST be removed on
+    # rollback. Without the truncate, len(app.user_middleware) would be
+    # pre_count + 1 here.
+    assert len(app.user_middleware) == pre_count, (
+        f"rollback did not truncate middleware: was {pre_count}, "
+        f"now {len(app.user_middleware)}"
+    )
+
+    # Retry must succeed and add exactly one middleware.
+    install(app, service="dbl_stack_test", version="0.0.1")
+    assert len(app.user_middleware) == pre_count + 1, (
+        f"retry did not add exactly one middleware: pre={pre_count}, "
+        f"post={len(app.user_middleware)}"
+    )
+
+    # Drive a request and confirm it's counted exactly once, not twice.
+    @app.get("/ping")
+    def ping():
+        return {"pong": True}
+
+    client = TestClient(app)
+    client.get("/ping")
+    text = client.get("/metrics").text
+
+    counter_lines = [
+        line
+        for line in text.splitlines()
+        if line.startswith("simsys_http_requests_total")
+        and 'route="/ping"' in line
+        and 'service="dbl_stack_test"' in line
+    ]
+    assert len(counter_lines) == 1, f"expected one /ping line, got {counter_lines}"
+    value = float(counter_lines[0].rsplit(" ", 1)[1])
+    assert value == 1.0, (
+        f"expected /ping count=1.0, got {value} — middleware double-stacked"
+    )

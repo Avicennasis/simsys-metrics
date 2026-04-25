@@ -3,15 +3,30 @@
 Every metric created through these helpers is forced to start with `simsys_`.
 The guard makes it impossible to accidentally ship a metric under a bare name
 or any other prefix when using this package.
+
+The factories also WARN (don't error) when ``service`` is missing from
+``labelnames``. The shared ``$service``-templated Grafana dashboards
+filter on the service label; metrics without it can't participate in
+the cross-service contract. The warning is logged once per metric name
+so library code that knows what it's doing isn't drowned in noise.
 """
 
 from __future__ import annotations
 
+import logging
 from typing import Iterable, Optional, Sequence
 
 from prometheus_client import Counter, Gauge, Histogram
 
+_log = logging.getLogger("simsys_metrics")
+
 PREFIX = "simsys_"
+
+# Metric names we've already warned about — keep the warning to once
+# per (process, name) so a misuse is loud the first time and silent
+# after that. Library-built metrics like simsys_*_total without
+# `service` (none currently — but defensive) won't spam logs.
+_warned_missing_service: set[str] = set()
 
 
 def _guard_name(name: str) -> str:
@@ -23,9 +38,34 @@ def _guard_name(name: str) -> str:
     return name
 
 
+def _warn_if_missing_service(name: str, labelnames: Sequence[str]) -> None:
+    """Log a warning when a custom metric's labelnames omit `service`.
+
+    The shared cross-service dashboards filter on the service label;
+    metrics without it can't participate in the contract. We don't
+    raise — consumer code that legitimately doesn't need `service`
+    (rare, but possible) shouldn't be broken — but we do make the
+    deviation visible.
+    """
+    if "service" in labelnames:
+        return
+    if name in _warned_missing_service:
+        return
+    _warned_missing_service.add(name)
+    _log.warning(
+        "simsys-metrics: metric %r registered without 'service' in "
+        "labelnames=%r — it will NOT participate in $service-templated "
+        "dashboards. Add 'service' to labelnames if you want cross-service "
+        "queries to work for this metric.",
+        name,
+        tuple(labelnames),
+    )
+
+
 def make_counter(
     name: str, documentation: str, labelnames: Sequence[str] = ()
 ) -> Counter:
+    _warn_if_missing_service(name, labelnames)
     return Counter(_guard_name(name), documentation, labelnames=tuple(labelnames))
 
 
@@ -41,6 +81,7 @@ def make_gauge(
     when non-None; omitting it preserves the stdlib default (``"all"``)
     and keeps the constructor call identical in single-process mode.
     """
+    _warn_if_missing_service(name, labelnames)
     kwargs: dict[str, object] = {}
     if multiprocess_mode is not None:
         kwargs["multiprocess_mode"] = multiprocess_mode
@@ -55,6 +96,7 @@ def make_histogram(
     labelnames: Sequence[str] = (),
     buckets: Iterable[float] | None = None,
 ) -> Histogram:
+    _warn_if_missing_service(name, labelnames)
     kwargs = {}
     if buckets is not None:
         kwargs["buckets"] = tuple(buckets)

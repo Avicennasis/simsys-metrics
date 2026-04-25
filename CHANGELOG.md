@@ -5,6 +5,46 @@ All notable changes to `simsys-metrics` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.7] — 2026-04-25
+
+Patch release closing three findings from a follow-up Codex audit (one
+HIGH, two MEDIUM).
+
+### Fixed
+- **install() retry no longer double-stacks middleware after partial
+  failure** (HIGH). When `app.add_middleware()` succeeded but a
+  subsequent step (e.g. `Instrumentator.expose()`) raised, the
+  rollback cleared the sentinel but left the middleware permanently
+  attached to `app.user_middleware`. A retry then added a SECOND
+  metrics middleware and every request was counted twice. The
+  rollback now snapshots `app.user_middleware` and `app.router.routes`
+  before the install attempt and truncates back to that snapshot on
+  failure. Same pattern in Flask: snapshots `before_request_funcs`,
+  `after_request_funcs`, `url_map`, and disconnects the
+  `got_request_exception` signal handler. Backed by a regression
+  test that forces `Instrumentator.expose` to fail once, asserts
+  `len(app.user_middleware)` is unchanged after rollback, retries,
+  and confirms one request → counter=1 (not 2).
+- **NaN / +Inf / -Inf intervals are now rejected** (MED). The
+  previous `interval <= 0` check let `math.nan` through (since
+  `nan <= 0` is False per IEEE-754) and Infinity passed too. The
+  daemon thread would later crash inside `time.sleep(nan)`. Affects
+  `track_queue` and `track_progress` (and `ProgressOpts.total` /
+  `.window`); now use `math.isfinite` checks.
+
+### Documentation
+- README "Metric catalogue" section now correctly distinguishes
+  baseline/opt-in metrics (which DO have `service`) from custom
+  metrics (which the factories don't force). The advanced-counter
+  example was updated to include `service` in `labelnames`.
+
+### Changed
+- `make_counter` / `make_gauge` / `make_histogram` now WARN (don't
+  error) at registration time when `service` is missing from
+  `labelnames`. Once-per-metric-name; library code that
+  legitimately doesn't need `service` (rare) isn't drowned in
+  noise. Backed by tests in `tests/test_prefix_guard.py`.
+
 ## [0.3.6] — 2026-04-25
 
 Patch release closing six findings from a follow-up Codex audit (two
@@ -233,6 +273,7 @@ First public release.
 - pre-commit with ruff (lint + format).
 - OpenSSF Scorecard, build provenance attestation on Go releases.
 
+[0.3.7]: https://github.com/Avicennasis/simsys-metrics/releases/tag/v0.3.7
 [0.3.6]: https://github.com/Avicennasis/simsys-metrics/releases/tag/v0.3.6
 [0.3.5]: https://github.com/Avicennasis/simsys-metrics/releases/tag/v0.3.5
 [0.3.4]: https://github.com/Avicennasis/simsys-metrics/releases/tag/v0.3.4

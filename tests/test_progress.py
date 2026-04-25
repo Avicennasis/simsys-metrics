@@ -189,3 +189,26 @@ def test_track_progress_inc_rejects_negative():
             t.inc(-1)
     finally:
         t.stop()
+
+
+def test_track_progress_rejects_nan_inf_intervals():
+    """NaN passes `<= 0` vacuously, Infinity is positive non-finite —
+    both would start a daemon thread that later crashes inside Event.wait
+    (NaN) or never wakes up (inf). Reject at construction time."""
+    import math
+
+    set_service("prog_test_nan_inf")
+    with pytest.raises(ValueError, match="positive finite number"):
+        track_progress(ProgressOpts(operation="x", total=1, interval=math.nan))
+    with pytest.raises(ValueError, match="positive finite number"):
+        track_progress(ProgressOpts(operation="x", total=1, interval=math.inf))
+    with pytest.raises(ValueError, match="positive finite number"):
+        track_progress(ProgressOpts(operation="x", total=1, interval=-math.inf))
+    with pytest.raises(ValueError, match="positive finite number"):
+        track_progress(ProgressOpts(operation="x", total=1, window=math.nan))
+    with pytest.raises(ValueError, match="positive finite number"):
+        track_progress(ProgressOpts(operation="x", total=1, window=math.inf))
+    with pytest.raises(ValueError, match="finite number"):
+        track_progress(ProgressOpts(operation="x", total=math.nan))
+    with pytest.raises(ValueError, match="finite number"):
+        track_progress(ProgressOpts(operation="x", total=math.inf))

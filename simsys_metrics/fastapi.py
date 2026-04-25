@@ -109,6 +109,15 @@ def install_fastapi(
     app.state.simsys_exempt_paths = _build_exempt_paths(metrics_path)
     app.state.simsys_metrics_installed = True
 
+    # Snapshot the middleware + route lists so we can truncate any partial
+    # additions on rollback. Without this, a failure between
+    # `app.add_middleware(...)` and the route-mount step (e.g.
+    # `Instrumentator.expose` raising) would leave the middleware
+    # permanently installed; a retry would then add a SECOND middleware,
+    # double-counting every request.
+    pre_middleware_count = len(app.user_middleware)
+    pre_route_count = len(app.router.routes)
+
     try:
         set_service(service)
         # Skip the custom SimsysProcessCollector in multiproc mode: it reads
@@ -187,10 +196,7 @@ def install_fastapi(
             ).expose(app, endpoint=metrics_path, include_in_schema=False)
     except BaseException:
         # Roll back the sentinel + state attributes so a retry can attempt
-        # a fresh install. Caller still sees the original exception. Covers
-        # ALL framework wiring failures (add_middleware after startup,
-        # Instrumentator.expose collisions, route registration on a frozen
-        # app, etc.) — not just the registry/build-info phase.
+        # a fresh install. Caller still sees the original exception.
         app.state.simsys_metrics_installed = False
         if hasattr(app.state, "simsys_service"):
             del app.state.simsys_service
@@ -198,4 +204,21 @@ def install_fastapi(
             del app.state.simsys_version
         if hasattr(app.state, "simsys_exempt_paths"):
             del app.state.simsys_exempt_paths
+
+        # Truncate any middleware/routes we added during this install
+        # attempt. Without this, a partial install (e.g.
+        # add_middleware succeeded but Instrumentator.expose raised)
+        # leaves the middleware in app.user_middleware permanently —
+        # the retry would add a SECOND middleware and every subsequent
+        # request would be counted twice. Starlette builds its
+        # middleware stack lazily on first request, so truncating the
+        # list before the app starts serving is safe.
+        try:
+            del app.user_middleware[pre_middleware_count:]
+        except Exception:  # pragma: no cover — defensive
+            pass
+        try:
+            del app.router.routes[pre_route_count:]
+        except Exception:  # pragma: no cover — defensive
+            pass
         raise

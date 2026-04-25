@@ -16,7 +16,7 @@ go get github.com/Avicennasis/simsys-metrics/go@latest
 Pin to a specific release:
 
 ```bash
-go get github.com/Avicennasis/simsys-metrics/go@v0.2.6
+go get github.com/Avicennasis/simsys-metrics/go@v0.2.7
 ```
 
 Note: the GitHub release tag is named `go/vX.Y.Z` (per Go's

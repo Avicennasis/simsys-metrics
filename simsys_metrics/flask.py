@@ -84,6 +84,15 @@ def install_flask(
         "installed": True,
     }
 
+    # Snapshot Flask hook + url_map state so we can truncate any partial
+    # additions on rollback. Without this, a failure between adding a
+    # before_request hook and registering the /metrics route would leave
+    # those hooks permanently installed; a retry would then double-stack.
+    pre_before = list(app.before_request_funcs.get(None, []))
+    pre_after = list(app.after_request_funcs.get(None, []))
+    pre_url_rules = list(app.url_map.iter_rules())
+    pre_view_funcs = dict(app.view_functions)
+
     try:
         set_service(service)
         register_process_collector(service)
@@ -174,9 +183,56 @@ def install_flask(
             return FlaskResponse(generate_latest(), mimetype=CONTENT_TYPE_LATEST)
     except BaseException:
         # Roll back the sentinel so a retry can attempt a fresh install.
-        # Caller still sees the original exception. Covers ALL framework
-        # wiring failures: before_request / after_request / route
-        # registration on an already-serving app, signal-connection
-        # collisions, and the registry/build-info phase.
+        # Caller still sees the original exception.
         app.extensions.pop("simsys_metrics", None)
+
+        # Truncate any hook + route side effects we added during this
+        # install attempt. Without this, a partial install (e.g. the
+        # before_request hook was added, but @app.route(metrics_path)
+        # then raised because the rule conflicts) leaves the hooks
+        # permanently in place — a retry would double-stack them and
+        # every request would be counted twice.
+        try:
+            if None in app.before_request_funcs:
+                app.before_request_funcs[None] = pre_before
+            if None in app.after_request_funcs:
+                app.after_request_funcs[None] = pre_after
+        except Exception:  # pragma: no cover — defensive
+            pass
+        try:
+            # Disconnect the got_request_exception signal handler if it
+            # was connected. blinker's `connect` returns a receiver ref;
+            # the easiest cleanup is to walk the signal's receivers and
+            # drop anything bound to this app whose qualname matches
+            # our handler.
+            from flask.signals import got_request_exception
+
+            for receiver_id in list(got_request_exception.receivers):
+                ref = got_request_exception.receivers[receiver_id]
+                fn = ref() if callable(ref) else ref
+                if (
+                    fn is not None
+                    and getattr(fn, "__name__", "") == "_simsys_on_exception"
+                ):
+                    got_request_exception.disconnect(fn, sender=app)
+        except Exception:  # pragma: no cover — defensive
+            pass
+        try:
+            # Roll back url_map + view_functions to the pre-install
+            # snapshot. Flask's url_map rebuild is normally append-only;
+            # we recreate the Map from the pre-install rules.
+            from werkzeug.routing import Map
+
+            current_rules = list(app.url_map.iter_rules())
+            added_endpoints = {r.endpoint for r in current_rules} - {
+                r.endpoint for r in pre_url_rules
+            }
+            if added_endpoints:
+                app.url_map = Map(
+                    [r.empty() for r in pre_url_rules],
+                    strict_slashes=app.url_map.strict_slashes,
+                )
+                app.view_functions = pre_view_funcs
+        except Exception:  # pragma: no cover — defensive
+            pass
         raise

@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.7] — 2026-04-25
+
+### Fixed
+- **`trackProgress` rejects NaN / Infinity / -Infinity intervals**
+  (MED). The previous `intervalMs <= 0` check let `NaN` through
+  vacuously, and `setInterval(fn, Infinity)` was clamped by Node to
+  a 1ms hot loop with `TimeoutOverflowWarning`. Both windowMs and
+  intervalMs now use `Number.isFinite` checks.
+
+### Changed
+- `makeCounter` / `makeGauge` / `makeHistogram` now `console.warn`
+  (don't throw) at registration time when `'service'` is missing
+  from `labelNames`. Once-per-metric-name. Custom metrics without a
+  `service` label can't participate in cross-service `$service`
+  Grafana dashboards; the warning makes the omission visible
+  instead of letting the metric silently break the contract.
+  Backed by `node/tests/registry-service-warning.test.ts`.
+
 ## [0.3.6] — 2026-04-25
 
 ### Fixed
@@ -125,6 +143,7 @@ notes:
 - Tarball distribution via GitHub Releases; install URL is the
   `simsys-metrics-0.3.0.tgz` asset attached to the `node-v0.3.0` release.
 
+[0.3.7]: https://github.com/Avicennasis/simsys-metrics/releases/tag/node-v0.3.7
 [0.3.6]: https://github.com/Avicennasis/simsys-metrics/releases/tag/node-v0.3.6
 [0.3.5]: https://github.com/Avicennasis/simsys-metrics/releases/tag/node-v0.3.5
 [0.3.4]: https://github.com/Avicennasis/simsys-metrics/releases/tag/node-v0.3.4

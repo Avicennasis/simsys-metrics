@@ -1,6 +1,8 @@
 package simsysmetrics
 
 import (
+	"bytes"
+	"log/slog"
 	"strings"
 	"testing"
 )
@@ -8,7 +10,7 @@ import (
 func TestMakeCounterEnforcesPrefix(t *testing.T) {
 	m := mustInstallForTest(t, "reg-test-counter")
 	// Good name — no panic.
-	_ = m.MakeCounter("simsys_things_total", "help", []string{"a"})
+	_ = m.MakeCounter("simsys_things_total", "help", []string{"service", "a"})
 
 	// Bad name — must panic with a helpful message.
 	defer func() {
@@ -21,6 +23,34 @@ func TestMakeCounterEnforcesPrefix(t *testing.T) {
 		}
 	}()
 	_ = m.MakeCounter("things_total", "help", nil)
+}
+
+// TestMakeCounterWarnsWhenServiceLabelMissing asserts the v0.3.7 warning:
+// custom metrics created without `service` in labels emit a one-time
+// slog.Warn at registration time.
+func TestMakeCounterWarnsWhenServiceLabelMissing(t *testing.T) {
+	m := mustInstallForTest(t, "reg-warn-svc")
+
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	defer slog.SetDefault(prev)
+
+	// Reset the warned-set so this test is hermetic if other tests
+	// already warned in the same process.
+	warnedMissingServiceMu.Lock()
+	delete(warnedMissingService, "simsys_no_service_label_test")
+	warnedMissingServiceMu.Unlock()
+
+	_ = m.MakeCounter(
+		"simsys_no_service_label_test",
+		"missing service label",
+		[]string{"ticker"},
+	)
+	out := buf.String()
+	if !strings.Contains(out, "service") || !strings.Contains(out, "level=WARN") {
+		t.Errorf("expected service-label WARN in slog output, got:\n%s", out)
+	}
 }
 
 func TestMakeGaugeEnforcesPrefix(t *testing.T) {

@@ -3,12 +3,23 @@ package simsysmetrics
 import (
 	"errors"
 	"fmt"
+	"log/slog"
+	"slices"
+	"sync"
 
 	"github.com/prometheus/client_golang/prometheus"
 )
 
 // PREFIX is the required name prefix for every simsys metric.
 const PREFIX = "simsys_"
+
+// warnedMissingService tracks metric names we've already warned about,
+// so a misuse logs once per process rather than spamming on every
+// register call.
+var (
+	warnedMissingService    = map[string]struct{}{}
+	warnedMissingServiceMu  sync.Mutex
+)
 
 // guardName returns name if it starts with PREFIX, else panics.
 // Matches the Python _registry._guard_name and Node registry.guardName
@@ -22,6 +33,31 @@ func guardName(name string) string {
 		))
 	}
 	return name
+}
+
+// warnIfMissingService logs a warning when a custom metric's labels
+// omit "service". The shared $service-templated Grafana dashboards
+// filter on the service label; metrics without it can't participate
+// in the cross-service contract. Doesn't error — consumer code that
+// legitimately doesn't need `service` shouldn't be broken — but does
+// make the deviation visible.
+func warnIfMissingService(name string, labels []string) {
+	if slices.Contains(labels, "service") {
+		return
+	}
+	warnedMissingServiceMu.Lock()
+	defer warnedMissingServiceMu.Unlock()
+	if _, ok := warnedMissingService[name]; ok {
+		return
+	}
+	warnedMissingService[name] = struct{}{}
+	slog.Warn(
+		"simsys-metrics: metric registered without 'service' in labels — "+
+			"it will NOT participate in $service-templated dashboards. "+
+			"Add 'service' to labels if you want cross-service queries to "+
+			"work for this metric.",
+		"name", name, "labels", labels,
+	)
 }
 
 // registerOrExisting registers c into reg. If reg already has an equivalent
@@ -44,8 +80,11 @@ func registerOrExisting[T prometheus.Collector](reg *prometheus.Registry, c T) T
 // MakeCounter creates a prefix-guarded CounterVec registered into m's
 // registry. If a CounterVec with the same descriptor is already registered
 // (Install called twice on the same Registry), the existing one is returned.
-// Panics if name does not start with PREFIX.
+// Panics if name does not start with PREFIX. Warns at registration time
+// if `service` is missing from labels (the metric won't participate in
+// cross-service dashboards).
 func (m *Metrics) MakeCounter(name, help string, labels []string) *prometheus.CounterVec {
+	warnIfMissingService(name, labels)
 	c := prometheus.NewCounterVec(
 		prometheus.CounterOpts{Name: guardName(name), Help: help},
 		labels,
@@ -55,7 +94,9 @@ func (m *Metrics) MakeCounter(name, help string, labels []string) *prometheus.Co
 
 // MakeGauge creates a prefix-guarded GaugeVec registered into m's registry.
 // Idempotent on the same registry. Panics if name does not start with PREFIX.
+// Warns if `service` is missing from labels.
 func (m *Metrics) MakeGauge(name, help string, labels []string) *prometheus.GaugeVec {
+	warnIfMissingService(name, labels)
 	g := prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{Name: guardName(name), Help: help},
 		labels,
@@ -66,7 +107,9 @@ func (m *Metrics) MakeGauge(name, help string, labels []string) *prometheus.Gaug
 // MakeHistogram creates a prefix-guarded HistogramVec registered into m's
 // registry. If buckets is nil, prometheus default buckets are used.
 // Idempotent on the same registry. Panics if name does not start with PREFIX.
+// Warns if `service` is missing from labels.
 func (m *Metrics) MakeHistogram(name, help string, labels []string, buckets []float64) *prometheus.HistogramVec {
+	warnIfMissingService(name, labels)
 	opts := prometheus.HistogramOpts{Name: guardName(name), Help: help}
 	if buckets != nil {
 		opts.Buckets = buckets

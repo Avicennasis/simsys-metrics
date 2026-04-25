@@ -27,6 +27,7 @@ observability; the two are complementary.
 from __future__ import annotations
 
 import logging
+import math
 import threading
 import time
 from dataclasses import dataclass
@@ -81,12 +82,35 @@ class ProgressTracker:
     """
 
     def __init__(self, opts: ProgressOpts) -> None:
+        # Reject NaN / +inf / -inf for interval and window — `<= 0`
+        # check alone passes NaN (since nan <= 0 is False) and Infinity
+        # (positive non-finite). Both lead to a daemon thread that
+        # later crashes inside time.sleep / Event.wait, hours after
+        # the misconfig was introduced.
+        if not isinstance(opts.total, (int, float)) or not math.isfinite(opts.total):
+            raise ValueError(
+                f"ProgressOpts.total must be a finite number, got {opts.total!r}"
+            )
         if opts.total < 0:
             raise ValueError(f"ProgressOpts.total must be >= 0, got {opts.total}")
-        if opts.window <= 0:
-            raise ValueError(f"ProgressOpts.window must be > 0, got {opts.window}")
-        if opts.interval <= 0:
-            raise ValueError(f"ProgressOpts.interval must be > 0, got {opts.interval}")
+        if (
+            not isinstance(opts.window, (int, float))
+            or not math.isfinite(opts.window)
+            or opts.window <= 0
+        ):
+            raise ValueError(
+                f"ProgressOpts.window must be a positive finite number, "
+                f"got {opts.window!r}"
+            )
+        if (
+            not isinstance(opts.interval, (int, float))
+            or not math.isfinite(opts.interval)
+            or opts.interval <= 0
+        ):
+            raise ValueError(
+                f"ProgressOpts.interval must be a positive finite number, "
+                f"got {opts.interval!r}"
+            )
 
         self._opts = opts
         self._service = get_service()

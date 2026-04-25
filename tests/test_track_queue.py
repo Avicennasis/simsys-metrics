@@ -54,11 +54,41 @@ def test_track_queue_rejects_zero_interval():
     """interval=0 would create a busy-loop in an unstoppable daemon thread.
     track_queue must reject it loudly at call time."""
     set_service("queue_test_svc")
-    with pytest.raises(ValueError, match="positive number"):
+    with pytest.raises(ValueError, match="positive finite number"):
         track_queue("zero_interval", depth_fn=lambda: 1, interval=0)
 
 
 def test_track_queue_rejects_negative_interval():
     set_service("queue_test_svc")
-    with pytest.raises(ValueError, match="positive number"):
+    with pytest.raises(ValueError, match="positive finite number"):
         track_queue("neg_interval", depth_fn=lambda: 1, interval=-1.0)
+
+
+def test_track_queue_rejects_nan_interval():
+    """NaN passes `<= 0` vacuously (since `nan <= 0` is False per IEEE-754),
+    so the previous check let it through. The daemon thread then crashes
+    inside time.sleep(nan). Reject at call time."""
+    import math
+
+    set_service("queue_test_svc")
+    with pytest.raises(ValueError, match="positive finite number"):
+        track_queue("nan_interval", depth_fn=lambda: 1, interval=math.nan)
+
+
+def test_track_queue_rejects_infinity_interval():
+    import math
+
+    set_service("queue_test_svc")
+    with pytest.raises(ValueError, match="positive finite number"):
+        track_queue("inf_interval", depth_fn=lambda: 1, interval=math.inf)
+
+
+def test_track_queue_rejects_bool_interval():
+    """`True` is an int (= 1) and `False` is 0; both should be rejected
+    explicitly so consumers get a loud error instead of "1 second polling
+    every iteration why is my dashboard so jittery"."""
+    set_service("queue_test_svc")
+    with pytest.raises(ValueError, match="positive finite number"):
+        track_queue("true_interval", depth_fn=lambda: 1, interval=True)
+    with pytest.raises(ValueError, match="positive finite number"):
+        track_queue("false_interval", depth_fn=lambda: 1, interval=False)

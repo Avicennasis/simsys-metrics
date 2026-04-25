@@ -19,6 +19,7 @@ from __future__ import annotations
 import functools
 import inspect
 import logging
+import math
 import os
 import threading
 import time
@@ -83,15 +84,20 @@ def track_queue(
 
     Returns the poller thread (daemon). Safe to ignore the return value.
 
-    ``interval`` must be > 0; ``interval=0`` would create a busy-loop that
-    cannot be stopped from the calling thread (the daemon dies with the
-    interpreter, but burns CPU until then). ``ValueError`` is raised at
-    call time so the misconfig is loud, not silent.
+    ``interval`` must be a positive finite number; ``interval=0``,
+    ``nan``, ``inf``, ``-inf`` and other non-finite values are rejected
+    at call time so misconfig is loud rather than starting a daemon
+    thread that later crashes inside ``time.sleep`` or busy-loops.
     """
-    if not isinstance(interval, (int, float)) or interval <= 0:
+    if (
+        not isinstance(interval, (int, float))
+        or isinstance(interval, bool)  # bool is int; reject explicitly
+        or not math.isfinite(interval)
+        or interval <= 0
+    ):
         raise ValueError(
-            f"track_queue: interval must be a positive number of seconds, "
-            f"got {interval!r}"
+            f"track_queue: interval must be a positive finite number of "
+            f"seconds, got {interval!r}"
         )
     service = get_service()
 
