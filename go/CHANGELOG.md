@@ -5,6 +5,28 @@ All notable changes to `simsys-metrics-go` will be documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [go/v0.2.8] — 2026-04-25
+
+### Fixed
+- **`Install` no longer accumulates `simsys_build_info` samples on
+  re-Install** (LOW/MED). Pre-fix, calling `Install` twice on the
+  same `Registry` re-used the existing `*GaugeVec` (good) but then
+  wrote a fresh `.Set(1)` with a new `started_at` (bad), leaving
+  TWO `simsys_build_info` samples for the same
+  service/version/commit when the two calls straddled a second
+  boundary. Now the registration uses
+  `registerOrExistingWithStatus`; the `.Set(1)` is skipped when
+  the GaugeVec was reused (an earlier Install owns the canonical
+  sample). Backed by
+  `TestInstallIdempotentDoesNotAccumulateBuildInfoSamples`.
+
+### Changed
+- New internal helper `registerOrExistingWithStatus[T]` returns
+  `(T, isNew bool)` so callers (currently just the build_info
+  registration) can branch on first-vs-reused. `registerOrExisting`
+  is preserved as a thin wrapper for the existing call sites that
+  don't need the bool.
+
 ## [go/v0.2.7] — 2026-04-25
 
 ### Changed
@@ -136,6 +158,7 @@ notes:
 - `TrackQueue` panic recovery: a `depthFn` panic logs the first occurrence
   via `slog` and silently absorbs subsequent panics to avoid log floods.
 
+[go/v0.2.8]: https://github.com/Avicennasis/simsys-metrics/releases/tag/go/v0.2.8
 [go/v0.2.7]: https://github.com/Avicennasis/simsys-metrics/releases/tag/go/v0.2.7
 [go/v0.2.6]: https://github.com/Avicennasis/simsys-metrics/releases/tag/go/v0.2.6
 [go/v0.2.5]: https://github.com/Avicennasis/simsys-metrics/releases/tag/go/v0.2.5

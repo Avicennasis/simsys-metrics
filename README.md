@@ -26,9 +26,9 @@ Grafana dashboard works across every runtime:
 
 | Package | Path | Languages | Tag prefix | Install |
 |---------|------|-----------|------------|---------|
-| `simsys-metrics` (Python) | `/` (root) | FastAPI, Flask | `v<semver>` (e.g. `v0.3.7`) | `pip install ... @ git+https://...@v0.3.7` |
-| [`@simsys/metrics` (Node)](node/) | `node/` | Express 5, Bun + Hono | `node-v<semver>` (e.g. `node-v0.3.7`) | GitHub Release tarball URL |
-| [`simsys-metrics-go`](go/) | `go/` | net/http | `go/v<semver>` (e.g. `go/v0.2.7`) | `go get ...@v0.2.7` |
+| `simsys-metrics` (Python) | `/` (root) | FastAPI, Flask | `v<semver>` (e.g. `v0.3.8`) | `pip install ... @ git+https://...@v0.3.8` |
+| [`@simsys/metrics` (Node)](node/) | `node/` | Express 5, Bun + Hono | `node-v<semver>` (e.g. `node-v0.3.8`) | GitHub Release tarball URL |
+| [`simsys-metrics-go`](go/) | `go/` | net/http | `go/v<semver>` (e.g. `go/v0.2.8`) | `go get ...@v0.2.8` |
 
 The Python package remains at the repo root for pip git-install compatibility. The Node and Go packages live under [`node/`](node/) and [`go/`](go/) respectively — see each subdirectory's README for install details.
 
@@ -66,10 +66,10 @@ up automatically.
 
 ```bash
 # FastAPI service
-pip install "simsys-metrics[fastapi] @ git+https://github.com/Avicennasis/simsys-metrics.git@v0.3.7"
+pip install "simsys-metrics[fastapi] @ git+https://github.com/Avicennasis/simsys-metrics.git@v0.3.8"
 
 # Flask service
-pip install "simsys-metrics[flask] @ git+https://github.com/Avicennasis/simsys-metrics.git@v0.3.7"
+pip install "simsys-metrics[flask] @ git+https://github.com/Avicennasis/simsys-metrics.git@v0.3.8"
 ```
 
 Pin to the tag. Bumping a consumer means re-pointing this URL at a newer tag.
@@ -78,7 +78,7 @@ Pin to the tag. Bumping a consumer means re-pointing this URL at a newer tag.
 <summary>Pinning in <code>requirements.txt</code></summary>
 
 ```
-simsys-metrics[fastapi] @ git+https://github.com/Avicennasis/simsys-metrics.git@v0.3.7
+simsys-metrics[fastapi] @ git+https://github.com/Avicennasis/simsys-metrics.git@v0.3.8
 ```
 
 Works in plain Docker builds — no SSH agent, no auth tokens required.
@@ -212,6 +212,8 @@ guarded registry:
 ```python
 from simsys_metrics._registry import make_counter
 
+from simsys_metrics import get_service
+
 forecast_requests_total = make_counter(
     "simsys_forecast_requests_total",
     "Forecast requests by ticker and outcome.",
@@ -221,17 +223,19 @@ forecast_requests_total = make_counter(
     # contract for this metric.
     labelnames=("service", "ticker", "interval", "outcome"),
 )
-# At call sites, pass service= explicitly (use simsys_metrics.get_service()
-# if you don't already have it threaded through):
-# forecast_requests_total.labels(
-#     service="my-api", ticker="AAPL", interval="1d", outcome="cache_hit"
-# ).inc()
 
 # Outcome enum is app-specific: e.g. {cache_hit, bad_request, upstream_error,
 # success, ...} for a forecasting API, or {dead, parked, active, deferred}
 # for a domain scanner.
+#
+# At call sites, pass service= explicitly. `get_service()` returns the
+# value `install(..., service=...)` set, so you don't need to thread it
+# through every call site.
 forecast_requests_total.labels(
-    ticker="AAPL", interval="1d", outcome="cache_hit"
+    service=get_service(),
+    ticker="AAPL",
+    interval="1d",
+    outcome="cache_hit",
 ).inc()
 ```
 

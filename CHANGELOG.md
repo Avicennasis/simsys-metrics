@@ -5,6 +5,52 @@ All notable changes to `simsys-metrics` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.8] — 2026-04-25
+
+Patch release closing five findings from a follow-up Codex audit (three
+MEDIUM, one LOW/MEDIUM, one LOW).
+
+### Fixed
+- **Python install rollback no longer leaks process-wide Prometheus
+  state** (MED). Pre-fix, FastAPI/Flask called `set_service`,
+  `register_process_collector`, and `register_build_info` BEFORE
+  framework wiring — and the rollback only cleared app-local state.
+  A successful retry then left two `simsys_build_info` samples for
+  the same service/version/commit (different `started_at`). The
+  rollback now also: drops the build_info label-set
+  (`unregister_build_info(...)`); unregisters the process collector
+  if THIS install was the one that created it; restores the
+  process-wide `_SERVICE` global to its pre-install value. Backed by
+  two regression tests in `tests/test_install_partial_failure.py`.
+- **Python `ProgressTracker.inc` and `set_total` reject NaN/Infinity**
+  (MED). Constructor validation was added in v0.3.7 but the mutators
+  still used a plain `< 0` check, which `nan` passed vacuously
+  (since `nan < 0` is False per IEEE-754). Both methods now use
+  `math.isfinite` and reject `nan`, `+inf`, `-inf`.
+
+### Changed
+- `register_process_collector(service)` now returns
+  `(collector, was_new)` — install rollback uses the bool to decide
+  whether to undo the registration.
+- `register_build_info(service, version, commit, started_at)` now
+  returns the resolved label tuple so callers (rollback, tests) can
+  drop the exact label-set via the new
+  `unregister_build_info(...)` helper.
+- `set_service` accepts `Optional[str]`. Internal-only signature
+  widening for rollback; passing None is private API.
+- `simsys_metrics.get_service` and `set_service` are now in `__all__`.
+  `get_service` was previously not re-exported (the README example
+  referenced it anyway). The earlier `set_service = set_service`
+  no-op self-assignment is gone.
+
+### Documentation
+- README custom-metric example was copy-paste broken: the
+  `labelnames` declared `service` but the active call omitted it,
+  so consumers running the example verbatim got
+  `ValueError: counter metric is missing label values`. The example
+  now passes `service=get_service()` and references `get_service`
+  via the public API.
+
 ## [0.3.7] — 2026-04-25
 
 Patch release closing three findings from a follow-up Codex audit (one
@@ -273,6 +319,7 @@ First public release.
 - pre-commit with ruff (lint + format).
 - OpenSSF Scorecard, build provenance attestation on Go releases.
 
+[0.3.8]: https://github.com/Avicennasis/simsys-metrics/releases/tag/v0.3.8
 [0.3.7]: https://github.com/Avicennasis/simsys-metrics/releases/tag/v0.3.7
 [0.3.6]: https://github.com/Avicennasis/simsys-metrics/releases/tag/v0.3.6
 [0.3.5]: https://github.com/Avicennasis/simsys-metrics/releases/tag/v0.3.5

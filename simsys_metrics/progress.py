@@ -141,7 +141,21 @@ class ProgressTracker:
         self._thread.start()
 
     def inc(self, n: int = 1) -> None:
-        """Record ``n`` items completed."""
+        """Record ``n`` items completed.
+
+        Rejects ``nan`` / ``+inf`` / ``-inf`` at call time. Pre-fix, the
+        plain ``< 0`` check let NaN through (since ``nan < 0`` is False
+        per IEEE-754) and ``Infinity`` slipped through; both then
+        propagated into the exported counter / gauge values, producing
+        ``simsys_progress_processed_total ... nan`` lines on /metrics
+        that downstream alerting cannot reason about.
+        """
+        if not isinstance(n, (int, float)) or isinstance(n, bool):
+            raise ValueError(f"ProgressTracker.inc n must be a number, got {n!r}")
+        if not math.isfinite(n):
+            raise ValueError(
+                f"ProgressTracker.inc n must be a finite number, got {n!r}"
+            )
         if n < 0:
             raise ValueError(f"ProgressTracker.inc n must be >= 0, got {n}")
         if n == 0:
@@ -153,7 +167,19 @@ class ProgressTracker:
         ).inc(n)
 
     def set_total(self, total: int) -> None:
-        """Update the denominator — useful when work grows mid-run."""
+        """Update the denominator — useful when work grows mid-run.
+
+        Rejects ``nan`` / ``+inf`` / ``-inf`` (same reasoning as
+        :meth:`inc`).
+        """
+        if not isinstance(total, (int, float)) or isinstance(total, bool):
+            raise ValueError(
+                f"ProgressTracker.set_total must be a number, got {total!r}"
+            )
+        if not math.isfinite(total):
+            raise ValueError(
+                f"ProgressTracker.set_total must be a finite number, got {total!r}"
+            )
         if total < 0:
             raise ValueError(f"ProgressTracker.set_total must be >= 0, got {total}")
         with self._lock:

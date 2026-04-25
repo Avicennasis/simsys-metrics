@@ -3,6 +3,7 @@ package simsysmetrics
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -44,6 +45,46 @@ func TestInstallIdempotentOnSameRegistry(t *testing.T) {
 	// Build-info gauge must still report value 1 with the right labels.
 	if !strings.Contains(body, `service="idem-test"`) {
 		t.Errorf("expected service=\"idem-test\" in metrics body:\n%s", body)
+	}
+}
+
+// TestInstallIdempotentDoesNotAccumulateBuildInfoSamples asserts that
+// re-Installing the same service/version/commit on the same Registry —
+// across a second boundary, so the auto-generated `started_at` would
+// differ — does NOT add a SECOND build_info label-set. Pre-fix, the
+// second Install reused the existing GaugeVec but then wrote a fresh
+// .Set(1) with a new started_at, leaving two samples in the registry.
+func TestInstallIdempotentDoesNotAccumulateBuildInfoSamples(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	opts := InstallOpts{
+		Service:  "bi-idem",
+		Version:  "0.0.1",
+		Commit:   "deadbeef",
+		Registry: reg,
+	}
+
+	m, err := Install(opts)
+	if err != nil {
+		t.Fatalf("first Install: %v", err)
+	}
+
+	// Sleep past a full second so the started_at the SECOND install
+	// would generate is different from the first. Without the fix,
+	// this produces two simsys_build_info samples.
+	time.Sleep(1100 * time.Millisecond)
+
+	if _, err := Install(opts); err != nil {
+		t.Fatalf("second Install: %v", err)
+	}
+
+	body := scrapeMetrics(t, m)
+	count := strings.Count(body, `simsys_build_info{`)
+	if count != 1 {
+		t.Errorf(
+			"expected exactly one simsys_build_info sample after re-Install, "+
+				"got %d:\n%s",
+			count, body,
+		)
 	}
 }
 

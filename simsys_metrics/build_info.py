@@ -63,11 +63,15 @@ def register_build_info(
     version: str,
     commit: Optional[str] = None,
     started_at: Optional[str] = None,
-) -> None:
+) -> tuple[str, str, str, str]:
     """Set the build_info gauge to 1 with the supplied labels.
 
     ``commit`` defaults to :func:`_detect_commit`. ``started_at`` defaults to
     the current UTC timestamp in ISO-8601 seconds precision.
+
+    Returns the resolved ``(service, version, commit, started_at)`` tuple
+    so callers (install rollback, tests) can pass it back into
+    :func:`unregister_build_info` to drop this exact label-set.
     """
     if commit is None:
         commit = _detect_commit()
@@ -81,3 +85,22 @@ def register_build_info(
         commit=commit,
         started_at=started_at,
     ).set(1)
+    return (service, version, commit, started_at)
+
+
+def unregister_build_info(
+    service: str, version: str, commit: str, started_at: str
+) -> None:
+    """Remove the exact build_info label-set previously registered.
+
+    install() rollback calls this when a partial install raises after
+    register_build_info has already added a sample — without it, the
+    failed sample lingers in the registry and a successful retry adds a
+    SECOND sample with a fresher started_at, leaving two simsys_build_info
+    series for the same service/version/commit.
+    """
+    try:
+        build_info.remove(service, version, commit, started_at)
+    except KeyError:
+        # Already gone — fine.
+        pass

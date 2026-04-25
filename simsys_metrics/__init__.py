@@ -19,11 +19,11 @@ from __future__ import annotations
 
 from typing import Optional
 
-from ._baseline import set_service, track_job, track_queue
+from ._baseline import get_service, set_service, track_job, track_queue
 from .helpers import safe_label
 from .progress import ProgressOpts, ProgressTracker, track_progress
 
-__version__ = "0.3.7"
+__version__ = "0.3.8"
 
 __all__ = [
     "install",
@@ -33,6 +33,8 @@ __all__ = [
     "ProgressOpts",
     "ProgressTracker",
     "safe_label",
+    "get_service",
+    "set_service",
     "__version__",
 ]
 
@@ -102,5 +104,7 @@ def install(
     )
 
 
-# Re-export set_service for advanced users who manage metrics without install().
-set_service = set_service  # noqa: PLW0127 — explicit re-export
+# `get_service` and `set_service` are imported above and listed in
+# __all__ for advanced users who manage metrics without going through
+# install(). The previous no-op self-assignment is unnecessary now that
+# they're both in __all__.

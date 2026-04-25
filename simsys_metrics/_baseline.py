@@ -60,11 +60,21 @@ _SERVICE: Optional[str] = None
 _SERVICE_LOCK = threading.Lock()
 
 
-def set_service(service: str) -> None:
-    """Set the process-wide service label. Called by install()."""
+def set_service(service: Optional[str]) -> None:
+    """Set the process-wide service label. Called by install().
+
+    Pass ``None`` (private) to clear; used by install rollback to restore
+    pre-install state on partial failure.
+    """
     global _SERVICE
     with _SERVICE_LOCK:
         _SERVICE = service
+
+
+def _peek_service() -> Optional[str]:
+    """Return the current service label without raising. Used by install
+    rollback to capture pre-state before mutating."""
+    return _SERVICE
 
 
 def get_service() -> str:

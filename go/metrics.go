@@ -93,11 +93,24 @@ func Install(opts InstallOpts) (*Metrics, error) {
 	}
 
 	// Baseline HTTP + build-info + job/queue/progress metrics.
-	m.buildInfo = m.MakeGauge(
+	//
+	// Use registerOrExistingWithStatus directly for build_info so we can
+	// detect a reused-vs-new registration: a re-Install on the same
+	// Registry must NOT add a SECOND build_info sample with a fresher
+	// `started_at`; the first sample stays canonical.
+	warnIfMissingService(
 		"simsys_build_info",
-		"Service build information. Always equal to 1; read labels for actual data.",
 		[]string{"service", "version", "commit", "started_at"},
 	)
+	buildInfoVec := prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: guardName("simsys_build_info"),
+			Help: "Service build information. Always equal to 1; read labels for actual data.",
+		},
+		[]string{"service", "version", "commit", "started_at"},
+	)
+	var buildInfoIsNew bool
+	m.buildInfo, buildInfoIsNew = registerOrExistingWithStatus(reg, buildInfoVec)
 	m.httpRequestsTotal = m.MakeCounter(
 		"simsys_http_requests_total",
 		"Total HTTP requests handled, bucketed by status class.",
@@ -152,17 +165,24 @@ func Install(opts InstallOpts) (*Metrics, error) {
 	// orphaning a freshly-built second-call collector.
 	registerOrExisting(reg, newSimsysProcessCollector(opts.Service))
 
-	// Set build_info to 1 with resolved labels.
-	commit := opts.Commit
-	if commit == "" {
-		commit = detectCommit()
+	// Set build_info to 1 with resolved labels — but ONLY when this
+	// install actually registered a fresh GaugeVec. If we reused an
+	// existing one (Install called twice on the same Registry), skip
+	// the Set; the first install's label-set stays canonical and we
+	// avoid stacking multiple build_info samples with different
+	// started_at values across a second boundary.
+	if buildInfoIsNew {
+		commit := opts.Commit
+		if commit == "" {
+			commit = detectCommit()
+		}
+		m.buildInfo.WithLabelValues(
+			opts.Service,
+			opts.Version,
+			commit,
+			m.startedAt.Format(time.RFC3339),
+		).Set(1)
 	}
-	m.buildInfo.WithLabelValues(
-		opts.Service,
-		opts.Version,
-		commit,
-		m.startedAt.Format(time.RFC3339),
-	).Set(1)
 
 	return m, nil
 }

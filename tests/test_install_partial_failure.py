@@ -164,6 +164,95 @@ def test_flask_install_late_route_failure_clears_sentinel(monkeypatch):
     assert call_count["n"] == 2
 
 
+def test_fastapi_partial_failure_does_not_leak_build_info(monkeypatch):
+    """Pre-fix: a partial install (Instrumentator.expose raises) left the
+    build_info gauge sample registered. A successful retry then added a
+    SECOND sample with a fresher started_at — two simsys_build_info
+    lines for the same service/version/commit. The rollback now calls
+    unregister_build_info to drop the failed-install label-set."""
+    import time as _time
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from prometheus_fastapi_instrumentator import Instrumentator
+
+    from simsys_metrics import install
+
+    app = FastAPI()
+    real_expose = Instrumentator.expose
+    call_count = {"n": 0}
+
+    def flaky(self, *args, **kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            raise RuntimeError("forced expose failure")
+        return real_expose(self, *args, **kwargs)
+
+    monkeypatch.setattr(Instrumentator, "expose", flaky)
+
+    with pytest.raises(RuntimeError, match="forced expose failure"):
+        install(app, service="bi_leak_test", version="0.0.1")
+
+    # Sleep past a second-precision boundary so a leaked label-set
+    # would have a different started_at than the retry's label-set.
+    _time.sleep(1.1)
+
+    install(app, service="bi_leak_test", version="0.0.1")
+
+    text = TestClient(app).get("/metrics").text
+    bi_lines = [
+        line
+        for line in text.splitlines()
+        if line.startswith("simsys_build_info{") and 'service="bi_leak_test"' in line
+    ]
+    assert len(bi_lines) == 1, (
+        f"expected exactly one simsys_build_info sample for bi_leak_test "
+        f"after rollback+retry, got {len(bi_lines)}:\n{bi_lines}"
+    )
+
+
+def test_flask_partial_failure_does_not_leak_build_info(monkeypatch):
+    """Same regression as above, Flask edition. Force build_info to
+    succeed but the Flask wiring phase to fail; assert the rollback
+    drops the build_info label-set so the retry's sample is the only
+    one visible on /metrics."""
+    import time as _time
+
+    from flask import Flask
+
+    from simsys_metrics import install
+
+    app = Flask("flask_bi_leak")
+
+    real_add_url_rule = app.add_url_rule
+    call_count = {"n": 0}
+
+    def flaky_add_url_rule(*args, **kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            raise AssertionError("forced add_url_rule failure")
+        return real_add_url_rule(*args, **kwargs)
+
+    monkeypatch.setattr(app, "add_url_rule", flaky_add_url_rule)
+
+    with pytest.raises(AssertionError, match="forced add_url_rule failure"):
+        install(app, service="bi_leak_flask", version="0.0.1")
+
+    _time.sleep(1.1)
+    install(app, service="bi_leak_flask", version="0.0.1")
+
+    text = app.test_client().get("/metrics").get_data(as_text=True)
+    bi_lines = [
+        line
+        for line in text.splitlines()
+        if line.startswith("simsys_build_info{") and 'service="bi_leak_flask"' in line
+    ]
+    assert len(bi_lines) == 1, (
+        f"expected exactly one simsys_build_info sample for bi_leak_flask "
+        f"after rollback+retry, got {len(bi_lines)}:\n{bi_lines}"
+    )
+
+
 def test_fastapi_partial_failure_does_not_double_stack_middleware(monkeypatch):
     """Regression: if install_fastapi() got past app.add_middleware() and
     then failed (e.g. Instrumentator.expose raised), the rollback must

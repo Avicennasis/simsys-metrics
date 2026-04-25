@@ -191,6 +191,44 @@ def test_track_progress_inc_rejects_negative():
         t.stop()
 
 
+def test_track_progress_inc_rejects_nan_inf():
+    """inc() must reject nan/inf — the previous `< 0` check let nan
+    through (nan < 0 is False per IEEE-754) and the value propagated
+    into the exported counter, yielding lines like
+    `simsys_progress_processed_total ... nan` that downstream alerting
+    cannot reason about.
+    """
+    import math
+
+    set_service("prog_test_inc_nan_inf")
+    t = track_progress(ProgressOpts(operation="inc_nan", total=10, interval=0.05))
+    try:
+        with pytest.raises(ValueError, match="finite"):
+            t.inc(math.nan)
+        with pytest.raises(ValueError, match="finite"):
+            t.inc(math.inf)
+        with pytest.raises(ValueError, match="finite"):
+            t.inc(-math.inf)
+    finally:
+        t.stop()
+
+
+def test_track_progress_set_total_rejects_nan_inf():
+    import math
+
+    set_service("prog_test_set_total_nan_inf")
+    t = track_progress(ProgressOpts(operation="set_total_nan", total=10, interval=0.05))
+    try:
+        with pytest.raises(ValueError, match="finite"):
+            t.set_total(math.nan)
+        with pytest.raises(ValueError, match="finite"):
+            t.set_total(math.inf)
+        with pytest.raises(ValueError, match="finite"):
+            t.set_total(-math.inf)
+    finally:
+        t.stop()
+
+
 def test_track_progress_rejects_nan_inf_intervals():
     """NaN passes `<= 0` vacuously, Infinity is positive non-finite —
     both would start a daemon thread that later crashes inside Event.wait

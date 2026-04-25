@@ -13,15 +13,15 @@ from typing import Optional
 
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
-from ._baseline import set_service
+from ._baseline import _peek_service, set_service
 from ._http import (
     http_request_duration_seconds,
     http_requests_total,
     normalize_method,
     status_bucket,
 )
-from ._process import register_process_collector
-from .build_info import register_build_info
+from ._process import register_process_collector, unregister_process_collector
+from .build_info import register_build_info, unregister_build_info
 
 _log = logging.getLogger("simsys_metrics")
 
@@ -84,19 +84,24 @@ def install_flask(
         "installed": True,
     }
 
-    # Snapshot Flask hook + url_map state so we can truncate any partial
-    # additions on rollback. Without this, a failure between adding a
-    # before_request hook and registering the /metrics route would leave
-    # those hooks permanently installed; a retry would then double-stack.
+    # Snapshot every piece of state install() is about to mutate so the
+    # rollback can undo each one. This covers Flask's own state (hooks +
+    # routes + view_functions) AND the process-wide prom-client state
+    # (service global, process collector, build_info label-set).
     pre_before = list(app.before_request_funcs.get(None, []))
     pre_after = list(app.after_request_funcs.get(None, []))
     pre_url_rules = list(app.url_map.iter_rules())
     pre_view_funcs = dict(app.view_functions)
+    pre_service = _peek_service()
+    proc_collector_was_new = False
+    build_info_labels: Optional[tuple[str, str, str, str]] = None
 
     try:
         set_service(service)
-        register_process_collector(service)
-        register_build_info(service=service, version=version, commit=commit)
+        _, proc_collector_was_new = register_process_collector(service)
+        build_info_labels = register_build_info(
+            service=service, version=version, commit=commit
+        )
 
         @app.before_request
         def _simsys_before():
@@ -233,6 +238,24 @@ def install_flask(
                     strict_slashes=app.url_map.strict_slashes,
                 )
                 app.view_functions = pre_view_funcs
+        except Exception:  # pragma: no cover — defensive
+            pass
+
+        # Undo process-wide prom-client mutations so a retry doesn't
+        # leave duplicate simsys_build_info samples and the process
+        # collector pointing at the failed-install service.
+        if build_info_labels is not None:
+            try:
+                unregister_build_info(*build_info_labels)
+            except Exception:  # pragma: no cover — defensive
+                pass
+        if proc_collector_was_new:
+            try:
+                unregister_process_collector()
+            except Exception:  # pragma: no cover — defensive
+                pass
+        try:
+            set_service(pre_service)  # type: ignore[arg-type]
         except Exception:  # pragma: no cover — defensive
             pass
         raise

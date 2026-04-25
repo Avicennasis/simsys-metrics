@@ -65,16 +65,28 @@ func warnIfMissingService(name string, labels []string) {
 // repeated Install calls with the same Registry idempotent rather than
 // panicking on duplicate-descriptor errors.
 func registerOrExisting[T prometheus.Collector](reg *prometheus.Registry, c T) T {
+	out, _ := registerOrExistingWithStatus(reg, c)
+	return out
+}
+
+// registerOrExistingWithStatus is the same as registerOrExisting but also
+// reports whether the registered collector is the freshly-built one (true)
+// or an already-registered equivalent that was reused (false). Install
+// uses this signal to decide whether to (re-)write build_info — the
+// freshly-built case writes the Set(1); the reused case skips the write
+// to avoid leaving multiple build_info label-sets when the same Service
+// is installed twice on the same Registry across a second boundary.
+func registerOrExistingWithStatus[T prometheus.Collector](reg *prometheus.Registry, c T) (T, bool) {
 	if err := reg.Register(c); err != nil {
 		var alreadyErr prometheus.AlreadyRegisteredError
 		if errors.As(err, &alreadyErr) {
 			if existing, ok := alreadyErr.ExistingCollector.(T); ok {
-				return existing
+				return existing, false
 			}
 		}
 		panic(err)
 	}
-	return c
+	return c, true
 }
 
 // MakeCounter creates a prefix-guarded CounterVec registered into m's

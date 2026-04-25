@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.8] — 2026-04-25
+
+### Fixed
+- **install() partial-failure rollback** (MED). Pre-fix, the sentinel
+  `app.locals.simsysMetricsInstalled` (Express) /
+  `app.simsysMetricsInstalled` (Hono) was set BEFORE the framework
+  wiring (`app.get(metricsPath, ...)`, `app.use(...)`). If any of
+  those threw, the sentinel stayed `true` and a retry no-op'd via
+  the idempotent guard — leaving `/metrics` and the HTTP middleware
+  unwired. The sentinel is now set LAST, inside a try/catch that
+  also drops the `simsys_build_info` label-set, restores the
+  pre-install service global, and clears the discovery
+  attributes (`simsysExemptPaths` / `simsysService` /
+  `simsysVersion`) on failure. Backed by
+  `node/tests/install-partial-failure.test.ts` (Express + Hono).
+
 ## [0.3.7] — 2026-04-25
 
 ### Fixed
@@ -143,6 +159,7 @@ notes:
 - Tarball distribution via GitHub Releases; install URL is the
   `simsys-metrics-0.3.0.tgz` asset attached to the `node-v0.3.0` release.
 
+[0.3.8]: https://github.com/Avicennasis/simsys-metrics/releases/tag/node-v0.3.8
 [0.3.7]: https://github.com/Avicennasis/simsys-metrics/releases/tag/node-v0.3.7
 [0.3.6]: https://github.com/Avicennasis/simsys-metrics/releases/tag/node-v0.3.6
 [0.3.5]: https://github.com/Avicennasis/simsys-metrics/releases/tag/node-v0.3.5

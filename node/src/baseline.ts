@@ -9,8 +9,16 @@ import { queueDepth, jobsTotal, jobDurationSeconds } from "./registry.js";
 let _service: string | null = null;
 const _queueTimers: NodeJS.Timeout[] = [];
 
-export function setService(service: string): void {
+export function setService(service: string | null): void {
   _service = service;
+}
+
+/**
+ * Return the current service name without throwing. Used by install
+ * rollback to capture pre-install state before mutating.
+ */
+export function _peekService(): string | null {
+  return _service;
 }
 
 export function getService(): string {

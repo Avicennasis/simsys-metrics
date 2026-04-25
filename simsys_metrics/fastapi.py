@@ -15,15 +15,15 @@ import os
 import time
 from typing import Optional
 
-from ._baseline import set_service
+from ._baseline import _peek_service, set_service
 from ._http import (
     http_request_duration_seconds,
     http_requests_total,
     normalize_method,
     status_bucket,
 )
-from ._process import register_process_collector
-from .build_info import register_build_info
+from ._process import register_process_collector, unregister_process_collector
+from .build_info import register_build_info, unregister_build_info
 
 _log = logging.getLogger("simsys_metrics")
 
@@ -109,14 +109,21 @@ def install_fastapi(
     app.state.simsys_exempt_paths = _build_exempt_paths(metrics_path)
     app.state.simsys_metrics_installed = True
 
-    # Snapshot the middleware + route lists so we can truncate any partial
-    # additions on rollback. Without this, a failure between
-    # `app.add_middleware(...)` and the route-mount step (e.g.
-    # `Instrumentator.expose` raising) would leave the middleware
-    # permanently installed; a retry would then add a SECOND middleware,
-    # double-counting every request.
+    # Snapshot every piece of state install() is about to mutate so the
+    # rollback can undo each one. This covers:
+    #   * app.user_middleware / app.router.routes (Starlette state)
+    #   * the process-wide _SERVICE global
+    #   * the singleton SimsysProcessCollector
+    #   * the simsys_build_info gauge label-set we're about to add
+    # Without this, a partial install (e.g. add_middleware succeeded but
+    # Instrumentator.expose raised) leaves shared registry state set; a
+    # successful retry then leaves duplicate build_info series and the
+    # process collector pointing at the failed-install service.
     pre_middleware_count = len(app.user_middleware)
     pre_route_count = len(app.router.routes)
+    pre_service = _peek_service()
+    proc_collector_was_new = False
+    build_info_labels: Optional[tuple[str, str, str, str]] = None
 
     try:
         set_service(service)
@@ -125,8 +132,10 @@ def install_fastapi(
         # workers would be meaningless. Per-process CPU/RSS/FDs gauges are a
         # known limitation of multiproc mode.
         if not multiproc_dir:
-            register_process_collector(service)
-        register_build_info(service=service, version=version, commit=commit)
+            _, proc_collector_was_new = register_process_collector(service)
+        build_info_labels = register_build_info(
+            service=service, version=version, commit=commit
+        )
 
         # Use a BaseHTTPMiddleware subclass via app.add_middleware() rather
         # than the function-style @app.middleware("http") decorator. The
@@ -206,19 +215,41 @@ def install_fastapi(
             del app.state.simsys_exempt_paths
 
         # Truncate any middleware/routes we added during this install
-        # attempt. Without this, a partial install (e.g.
-        # add_middleware succeeded but Instrumentator.expose raised)
-        # leaves the middleware in app.user_middleware permanently —
-        # the retry would add a SECOND middleware and every subsequent
-        # request would be counted twice. Starlette builds its
-        # middleware stack lazily on first request, so truncating the
-        # list before the app starts serving is safe.
+        # attempt. Starlette builds its middleware stack lazily on first
+        # request, so truncating the list before the app starts serving
+        # is safe.
         try:
             del app.user_middleware[pre_middleware_count:]
         except Exception:  # pragma: no cover — defensive
             pass
         try:
             del app.router.routes[pre_route_count:]
+        except Exception:  # pragma: no cover — defensive
+            pass
+
+        # Undo process-wide prom-client mutations:
+        #   * Drop the simsys_build_info label-set we set, so a retry
+        #     doesn't leave two samples with different started_at values
+        #     for the same service/version/commit.
+        #   * Unregister the SimsysProcessCollector if THIS install was
+        #     the one that registered it (was_new=True). If the collector
+        #     was already there for a different service, an earlier
+        #     install owns it; don't touch.
+        #   * Restore the _SERVICE global to its pre-install value so
+        #     consumer code that reads get_service() doesn't see a
+        #     half-installed identity.
+        if build_info_labels is not None:
+            try:
+                unregister_build_info(*build_info_labels)
+            except Exception:  # pragma: no cover — defensive
+                pass
+        if proc_collector_was_new:
+            try:
+                unregister_process_collector()
+            except Exception:  # pragma: no cover — defensive
+                pass
+        try:
+            set_service(pre_service)  # type: ignore[arg-type]
         except Exception:  # pragma: no cover — defensive
             pass
         raise

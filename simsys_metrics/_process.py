@@ -75,8 +75,17 @@ class SimsysProcessCollector:
         yield fds_family
 
 
-def register_process_collector(service: str) -> "SimsysProcessCollector":
-    """Register (or re-use) the singleton process collector for ``service``."""
+def register_process_collector(
+    service: str,
+) -> tuple["SimsysProcessCollector", bool]:
+    """Register (or re-use) the singleton process collector for ``service``.
+
+    Returns ``(collector, was_new)``. ``was_new=True`` means this call
+    actually registered a NEW collector (either the first registration
+    or a service swap that unregistered the old one); ``False`` means
+    the existing collector was reused unchanged. install() uses this
+    flag to decide whether to unregister on rollback.
+    """
     global _collector
     with _lock:
         if _collector is not None:
@@ -84,10 +93,11 @@ def register_process_collector(service: str) -> "SimsysProcessCollector":
                 REGISTRY.unregister(_collector)
                 _collector = SimsysProcessCollector(service)
                 REGISTRY.register(_collector)
-            return _collector
+                return _collector, True
+            return _collector, False
         _collector = SimsysProcessCollector(service)
         REGISTRY.register(_collector)
-        return _collector
+        return _collector, True
 
 
 def unregister_process_collector() -> None:
