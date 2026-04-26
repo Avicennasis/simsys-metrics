@@ -5,6 +5,91 @@ All notable changes to `simsys-metrics` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.9] — 2026-04-26
+
+Patch release closing five findings from a follow-up Codex audit (one
+MEDIUM/HIGH, three MEDIUM, one LOW). All five regressed pre-fix on the
+exact reproductions Codex provided; v0.3.9 includes regression coverage
+for all four behavioural fixes.
+
+### Fixed
+- **F1 — Hono partial install double-stacks middleware on retry**
+  (MED/HIGH, Node). Pre-fix, when `app.get(metricsPath, ...)` threw
+  during install, rollback cleared app props but left the wildcard
+  middleware (`app.use("*", ...)`) wired. A retry then added a SECOND
+  middleware on top, so every subsequent request was counted twice
+  (Codex repro: `simsys_http_requests_total{route="/hello"} = 2`).
+  Hono offers no public API for removing routes, so the fix wires
+  middleware/route AT MOST ONCE per app and gates both handlers on
+  the live `simsysMetricsInstalled` flag — partial installs leave the
+  wiring INERT until a retry re-arms the flag, eliminating the
+  double-stack failure mode.
+- **F2 — Express 5 rollback snapshots the wrong router stack**
+  (MED, Node). Express 5 exposes the router at `app.router`, not
+  `app._router`. Pre-fix snapshot read `app._router?.stack?.length`
+  (always undefined on Express 5) so rollback no-opped — leaving a
+  `/metrics` route layer in the stack on failure. Codex repro:
+  stack `["/metrics"]` after fail, `["/metrics", "/metrics", "mw"]`
+  after retry. Fix prefers `app.router.stack` and falls back to
+  `app._router.stack` so both Express 4 and 5 truncate cleanly.
+- **F3 — `build_info` rollback could delete a pre-existing sample it
+  did not own** (MED, Python + Node). `started_at` is second-precision,
+  so two installs of the same `service+version+commit` started in
+  the same wall-clock second produce identical labelsets. Pre-fix,
+  install B's rollback unconditionally called
+  `build_info.remove(...)` and silently deleted install A's
+  still-live sample. Fix: `register_build_info` now returns
+  `(labels, was_new)` (Node: `{labels, wasNew}`) tracked via a
+  module-scoped ownership set; rollback uses the new
+  `unregister_build_info_if_owned(labels, was_new)` /
+  `unregisterBuildInfoIfOwned(labels, wasNew)` helpers which are a
+  no-op when `was_new=false`.
+- **F4 — Process-collector rollback did not restore the prior
+  collector/service** (MED, Python + Node). When install B
+  service-swapped the singleton (Python: unregistered A's
+  `SimsysProcessCollector`, registered B's; Node: mutated the
+  static `service` global), rollback called
+  `unregister_process_collector()` and left the registry with NO
+  process collector at all — service A's `simsys_process_*` lines
+  disappeared. Fix: `register_process_collector` now returns a
+  `ProcessCollectorRollbackState` capturing the action
+  (`reused`/`registered`/`service_swap`) plus the prior collector;
+  rollback's `restore_process_collector` re-registers A's collector
+  on swap-then-fail. Node additionally `.reset()`s the per-labelset
+  state on swap so the swapped-out service's stale gauge samples
+  don't linger between scrapes (matches Python's clean-emit
+  behaviour where each collect() yields a fresh MetricFamily).
+- **F5 — Go files not gofmt-clean** (LOW, Go). Pure formatting in
+  `go/metrics.go` and `go/registry.go` (alignment around struct
+  fields and a `var ()` block).
+
+### Changed
+- `register_build_info(...)` now returns
+  `tuple[tuple[str, str, str, str], bool]` — `(labels, was_new)`.
+  The same-shape `unregister_build_info(...)` is preserved as the
+  unconditional-remove escape hatch for tests; new callers should
+  use `unregister_build_info_if_owned(labels, was_new)`.
+- `register_process_collector(service)` (Python) now returns
+  `tuple[SimsysProcessCollector, ProcessCollectorRollbackState]`.
+  The previous `(collector, was_new: bool)` shape is gone — adapter
+  rollback uses the structured state to choose between
+  re-registering the prior collector (swap), dropping the new one
+  (fresh registration), or no-op (reuse).
+- `registerProcessCollector(svc)` (Node) now returns
+  `ProcessCollectorRollbackState`; pair with the new
+  `restoreProcessCollector(state)` to undo on partial install.
+
+### Tests
+- `tests/test_install_codex_findings.py` — 4 new pytest cases for
+  F3 and F4 (unit + end-to-end FastAPI rollback).
+- `node/tests/install-codex-findings.test.ts` — 4 new vitest cases
+  for F1–F4.
+- Verification: ruff clean, `pytest -q` 88 passed, `go vet`/`go test`/
+  `go test -race`/`staticcheck`/`gofmt -l` clean, `npm run build`
+  clean, `npm test` 38 passed, `npm pack --dry-run` 43 files,
+  `npm audit --omit=dev --audit-level=moderate` 0 vulns,
+  conformance smoke green on port 8876.
+
 ## [0.3.8] — 2026-04-25
 
 Patch release closing five findings from a follow-up Codex audit (three

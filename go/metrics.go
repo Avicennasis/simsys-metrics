@@ -52,9 +52,9 @@ type Metrics struct {
 	jobsTotal                  *prometheus.CounterVec
 	jobDurationSeconds         *prometheus.HistogramVec
 
-	progressProcessedTotal              *prometheus.CounterVec
-	progressRemaining                   *prometheus.GaugeVec
-	progressRatePerSecond               *prometheus.GaugeVec
+	progressProcessedTotal               *prometheus.CounterVec
+	progressRemaining                    *prometheus.GaugeVec
+	progressRatePerSecond                *prometheus.GaugeVec
 	progressEstimatedCompletionTimestamp *prometheus.GaugeVec
 
 	startedAt time.Time

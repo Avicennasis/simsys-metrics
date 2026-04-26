@@ -13,12 +13,21 @@ import {
   httpRequestDurationSeconds,
   normalizeMethod,
   statusBucket,
-  buildInfo,
   registry,
   registerNodeDefaultMetrics,
 } from "../registry.js";
-import { registerProcessCollector } from "../process.js";
-import { detectCommit, startedAtNow } from "../buildinfo.js";
+import {
+  registerProcessCollector,
+  restoreProcessCollector,
+  type ProcessCollectorRollbackState,
+} from "../process.js";
+import {
+  detectCommit,
+  startedAtNow,
+  registerBuildInfo,
+  unregisterBuildInfoIfOwned,
+  type BuildInfoLabels,
+} from "../buildinfo.js";
 import { setService, _peekService } from "../baseline.js";
 
 // We intentionally keep the Express type loose — consumers bring their own
@@ -82,13 +91,24 @@ export function installExpress(
   // could be set true before framework wiring completes — leaving the
   // app in a half-installed state where retries no-op and /metrics is
   // never mounted.
+  //
+  // Express 5 exposes the router stack at `app.router.stack`; Express 4
+  // lazily creates `app._router.stack` on first route registration.
+  // Read whichever exists — and fall back to 0 when neither is set yet
+  // (Express 4 pre-lazyrouter), so rollback truncates the stack created
+  // during install back to its pre-install length on either major.
   const preService = _peekService();
-  const preMiddlewareCount = (app._router?.stack?.length as number | undefined) ?? null;
-  let buildInfoLabels: { service: string; version: string; commit: string; started_at: string } | null = null;
+  const preMiddlewareCount =
+    ((app.router?.stack?.length as number | undefined) ??
+      (app._router?.stack?.length as number | undefined) ??
+      0);
+  let buildInfoLabels: BuildInfoLabels | null = null;
+  let buildInfoWasNew = false;
+  let procCollectorState: ProcessCollectorRollbackState | null = null;
 
   try {
     setService(service);
-    registerProcessCollector(service);
+    procCollectorState = registerProcessCollector(service);
     registerNodeDefaultMetrics(service);
     buildInfoLabels = {
       service,
@@ -96,7 +116,7 @@ export function installExpress(
       commit,
       started_at: startedAtNow(),
     };
-    buildInfo.labels(buildInfoLabels).set(1);
+    ({ wasNew: buildInfoWasNew } = registerBuildInfo(buildInfoLabels));
 
     // Expose the exempt-path set so upstream auth middleware can skip
     // them without hard-coding the list. Includes the user-supplied
@@ -176,16 +196,30 @@ export function installExpress(
     }
     if (buildInfoLabels !== null) {
       try {
-        buildInfo.remove(buildInfoLabels);
+        unregisterBuildInfoIfOwned(buildInfoLabels, buildInfoWasNew);
+      } catch {
+        /* defensive */
+      }
+    }
+    if (procCollectorState !== null) {
+      try {
+        restoreProcessCollector(procCollectorState);
       } catch {
         /* defensive */
       }
     }
     // Truncate any middleware/routes added to Express's internal stack
-    // during this install attempt, so a retry doesn't double-stack.
-    if (preMiddlewareCount !== null && app._router?.stack) {
+    // during this install attempt, so a retry doesn't double-stack. In
+    // Express 5 the router lives at `app.router`; in Express 4 it's
+    // `app._router` (created lazily on first route registration). Truncate
+    // whichever one is live now — even if it didn't exist before install
+    // (preMiddlewareCount would be 0).
+    const liveStack: unknown[] | undefined =
+      (app.router?.stack as unknown[] | undefined) ??
+      (app._router?.stack as unknown[] | undefined);
+    if (liveStack) {
       try {
-        app._router.stack.length = preMiddlewareCount;
+        (liveStack as { length: number }).length = preMiddlewareCount;
       } catch {
         /* defensive */
       }

@@ -17,6 +17,22 @@ import { registry } from "./registry.js";
 let registered = false;
 let service: string | null = null;
 
+/**
+ * Snapshot of process-collector state immediately before
+ * registerProcessCollector() mutated it. Adapter rollback passes this
+ * back to restoreProcessCollector() so a swap-then-fail sequence
+ * doesn't leave a prior service's process metrics broken.
+ *
+ * `action` describes what registerProcessCollector did:
+ *   - "reused":        collector already existed for this service; nothing changed.
+ *   - "registered":    no collector existed; we registered fresh metrics. Rollback drops them.
+ *   - "service-swap":  collector existed but for a different service; we relabelled it. Rollback restores priorService.
+ */
+export type ProcessCollectorRollbackState =
+  | { action: "reused" }
+  | { action: "registered" }
+  | { action: "service-swap"; priorService: string };
+
 // We store these in module scope so they survive across collect() cycles.
 let cpuTotal: Counter | null = null;
 let memoryBytes: Gauge | null = null;
@@ -51,13 +67,32 @@ function countOpenFds(): number {
   }
 }
 
-export function registerProcessCollector(svc: string): void {
+export function registerProcessCollector(
+  svc: string,
+): ProcessCollectorRollbackState {
   if (registered) {
-    if (service !== svc) {
-      // Re-install with a different service: refresh the static label.
-      service = svc;
+    if (service === svc) {
+      return { action: "reused" };
     }
-    return;
+    // Re-install with a different service: refresh the static label so
+    // future collect() callbacks tag samples with the new service. Capture
+    // the prior service so adapter rollback can put it back if a later
+    // step in the same install attempt fails.
+    //
+    // Reset all per-labelset state on swap. prom-client gauges/counters
+    // retain entries for prior labelsets indefinitely; without a reset,
+    // future scrapes would emit stale samples for the swapped-out
+    // service alongside the live ones. Python's _process.py achieves
+    // the same cleanliness by unregistering the old collector and
+    // registering a brand-new one.
+    const priorService = service ?? "";
+    service = svc;
+    lastCpuSeconds = 0;
+    cpuTotal?.reset();
+    memoryBytes?.reset();
+    openFds?.reset();
+    uptimeSeconds?.reset();
+    return { action: "service-swap", priorService };
   }
   service = svc;
   registered = true;
@@ -124,10 +159,51 @@ export function registerProcessCollector(svc: string): void {
       this.set({ service: service! }, process.uptime());
     },
   });
+
+  return { action: "registered" };
 }
 
-export function _resetForTests(): void {
-  // Best-effort test helper.
+/**
+ * Undo whatever registerProcessCollector() did, given its returned state.
+ * Called from adapter install rollback when a later step fails, so a
+ * service-swap doesn't leave the PRIOR install's process metrics broken
+ * (label rewritten to the failed install's service) and a fresh
+ * registration doesn't leave dangling collectors in the registry.
+ */
+export function restoreProcessCollector(
+  state: ProcessCollectorRollbackState,
+): void {
+  switch (state.action) {
+    case "reused":
+      // Nothing changed; nothing to undo.
+      return;
+    case "service-swap":
+      // We mutated the static `service` global in place — restore it.
+      // The Counter/Gauge instances are reused, so collect() callbacks
+      // will resume tagging samples with the prior service value.
+      //
+      // BUT: prom-client retains per-labelset state, so the
+      // service-swap window's B-labelled gauge samples linger in the
+      // metric's hashmap as stale values. Reset all of them here so
+      // future scrapes only contain the restored A-labelled samples
+      // (collect() will re-populate them on the next scrape).
+      // lastCpuSeconds is also reset so the Counter's delta-tracking
+      // doesn't undershoot after the wipe.
+      service = state.priorService;
+      lastCpuSeconds = 0;
+      cpuTotal?.reset();
+      memoryBytes?.reset();
+      openFds?.reset();
+      uptimeSeconds?.reset();
+      return;
+    case "registered":
+      // We registered fresh — drop everything.
+      _unregisterAll();
+      return;
+  }
+}
+
+function _unregisterAll(): void {
   registered = false;
   service = null;
   lastCpuSeconds = 0;
@@ -137,4 +213,9 @@ export function _resetForTests(): void {
   registry.removeSingleMetric("simsys_process_open_fds");
   registry.removeSingleMetric("simsys_process_uptime_seconds");
   cpuTotal = memoryBytes = openFds = uptimeSeconds = null;
+}
+
+export function _resetForTests(): void {
+  // Best-effort test helper.
+  _unregisterAll();
 }

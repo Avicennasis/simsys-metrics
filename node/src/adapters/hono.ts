@@ -11,12 +11,21 @@ import {
   httpRequestDurationSeconds,
   normalizeMethod,
   statusBucket,
-  buildInfo,
   registry,
   registerNodeDefaultMetrics,
 } from "../registry.js";
-import { registerProcessCollector } from "../process.js";
-import { detectCommit, startedAtNow } from "../buildinfo.js";
+import {
+  registerProcessCollector,
+  restoreProcessCollector,
+  type ProcessCollectorRollbackState,
+} from "../process.js";
+import {
+  detectCommit,
+  startedAtNow,
+  registerBuildInfo,
+  unregisterBuildInfoIfOwned,
+  type BuildInfoLabels,
+} from "../buildinfo.js";
 import { setService, _peekService } from "../baseline.js";
 
 // Keep Hono loose-typed — we don't import `hono` at runtime here; the consumer
@@ -79,11 +88,13 @@ export function installHono(app: HonoLike, opts: HonoInstallOpts): HonoLike {
   // sentinel below could be set true before framework wiring completes,
   // leaving the app half-installed and retries no-opping.
   const preService = _peekService();
-  let buildInfoLabels: { service: string; version: string; commit: string; started_at: string } | null = null;
+  let buildInfoLabels: BuildInfoLabels | null = null;
+  let buildInfoWasNew = false;
+  let procCollectorState: ProcessCollectorRollbackState | null = null;
 
   try {
     setService(service);
-    registerProcessCollector(service);
+    procCollectorState = registerProcessCollector(service);
     registerNodeDefaultMetrics(service);
     buildInfoLabels = {
       service,
@@ -91,76 +102,123 @@ export function installHono(app: HonoLike, opts: HonoInstallOpts): HonoLike {
       commit,
       started_at: startedAtNow(),
     };
-    buildInfo.labels(buildInfoLabels).set(1);
+    ({ wasNew: buildInfoWasNew } = registerBuildInfo(buildInfoLabels));
 
     // Expose the exempt-path set via a symbol-keyed property on the app
     // instance itself (Hono doesn't have per-app `locals`).
     appProps.simsysExemptPaths = buildExemptPaths(metricsPath);
     appProps.simsysService = service;
     appProps.simsysVersion = version;
+    appProps.simsysMetricsPath = metricsPath;
 
-    // Middleware for HTTP request metrics — registered BEFORE the
-    // /metrics handler so ordering is mw -> [route handlers, including
-    // /metrics]. Short-circuits the metrics path so the scrape endpoint
-    // isn't recorded.
-    app.use("*", async (c: HonoLike, next: () => Promise<void>) => {
-      if (c.req.path === metricsPath) {
-        return next();
-      }
-      const start = process.hrtime.bigint();
-      try {
-        await next();
-      } finally {
-        const elapsed = Number(process.hrtime.bigint() - start) / 1e9;
-        const method = normalizeMethod(c.req.method);
-        // Hono 4+: routePath is the template ("/items/:id"). When no
-        // real route handler matched, Hono reports the *middleware's
-        // own* pattern ("/*" or "*") as the routePath — those values
-        // must collapse into the unmatched bucket so 404 scanner
-        // traffic doesn't blow out cardinality.
-        const rawRoute =
-          typeof c.req.routePath === "string" ? c.req.routePath : "";
-        const route: string =
-          rawRoute && rawRoute !== "/*" && rawRoute !== "*"
-            ? rawRoute
-            : "__unmatched__";
-        const status = c.res?.status ?? 500;
-        httpRequestsTotal
-          .labels({
-            service,
-            method,
-            route,
-            status: statusBucket(status),
-          })
-          .inc();
-        httpRequestDurationSeconds
-          .labels({ service, method, route })
-          .observe(elapsed);
-      }
-    });
+    // Hono offers no public API for removing a previously-registered
+    // route or middleware. So instead of mutating-and-rolling-back, we
+    // install the framework wiring AT MOST ONCE per app and gate every
+    // recording action on the live `simsysMetricsInstalled` flag (set
+    // LAST in this try block; cleared by the catch below). The handlers
+    // also read service/metricsPath from appProps each request, so
+    // stale closure values from a rolled-back partial install can't
+    // pollute future metrics.
+    //
+    // Net effect: a partial install (e.g. app.get throws after app.use
+    // already wired the middleware) leaves the wiring in place but
+    // INERT — no metrics are recorded, /metrics returns 404. A retry
+    // skips re-wiring (so middleware doesn't double-stack and routes
+    // don't double-mount) and just re-arms the live flag.
+    if (!appProps.simsysHonoMwInstalled) {
+      app.use("*", async (c: HonoLike, next: () => Promise<void>) => {
+        if (!appProps.simsysMetricsInstalled) {
+          // Partial install rolled back — be inert until armed again.
+          return next();
+        }
+        const livePath =
+          (appProps.simsysMetricsPath as string | undefined) ?? "/metrics";
+        if (c.req.path === livePath) {
+          return next();
+        }
+        const start = process.hrtime.bigint();
+        try {
+          await next();
+        } finally {
+          const elapsed = Number(process.hrtime.bigint() - start) / 1e9;
+          const liveService =
+            (appProps.simsysService as string | undefined) ?? service;
+          const method = normalizeMethod(c.req.method);
+          // Hono 4+: routePath is the template ("/items/:id"). When no
+          // real route handler matched, Hono reports the *middleware's
+          // own* pattern ("/*" or "*") as the routePath — those values
+          // must collapse into the unmatched bucket so 404 scanner
+          // traffic doesn't blow out cardinality.
+          const rawRoute =
+            typeof c.req.routePath === "string" ? c.req.routePath : "";
+          const route: string =
+            rawRoute && rawRoute !== "/*" && rawRoute !== "*"
+              ? rawRoute
+              : "__unmatched__";
+          const status = c.res?.status ?? 500;
+          httpRequestsTotal
+            .labels({
+              service: liveService,
+              method,
+              route,
+              status: statusBucket(status),
+            })
+            .inc();
+          httpRequestDurationSeconds
+            .labels({ service: liveService, method, route })
+            .observe(elapsed);
+        }
+      });
+      appProps.simsysHonoMwInstalled = true;
+    }
 
-    app.get(metricsPath, async (c: HonoLike) => {
-      const body = await registry.metrics();
-      return c.text(body, 200, { "Content-Type": registry.contentType });
-    });
+    if (!appProps.simsysHonoRouteInstalled) {
+      app.get(metricsPath, async (c: HonoLike) => {
+        if (!appProps.simsysMetricsInstalled) {
+          // Partial install rolled back — pretend the route doesn't exist
+          // so a retry can re-arm without a stale handler answering.
+          return c.notFound();
+        }
+        const body = await registry.metrics();
+        return c.text(body, 200, { "Content-Type": registry.contentType });
+      });
+      appProps.simsysHonoRouteInstalled = true;
+    }
 
     // Set the sentinel LAST — only after every framework-wiring step
-    // succeeded.
+    // succeeded. Until this is true, the wired middleware/route stay
+    // inert per the gating checks above.
     appProps.simsysMetricsInstalled = true;
   } catch (err) {
     // Roll back app props + any process-wide prom-client mutations made
     // during this install attempt. Caller still sees the original error.
+    //
+    // Note: simsysHonoMwInstalled / simsysHonoRouteInstalled are
+    // INTENTIONALLY left as-is. Hono can't unregister routes; clearing
+    // the flags would cause a retry to install a SECOND middleware/route
+    // on top of the inert one, producing the double-stack bug Codex's
+    // F1 finding describes. The handlers are gated on
+    // simsysMetricsInstalled, so they remain inert until a retry sets
+    // that flag back to true.
     try {
       delete appProps.simsysExemptPaths;
       delete appProps.simsysService;
       delete appProps.simsysVersion;
+      delete appProps.simsysMetricsPath;
       delete appProps.simsysMetricsInstalled;
     } catch {
       /* defensive */
     }
     if (buildInfoLabels !== null) {
       try {
-        buildInfo.remove(buildInfoLabels);
+        unregisterBuildInfoIfOwned(buildInfoLabels, buildInfoWasNew);
+      } catch {
+        /* defensive */
+      }
+    }
+    if (procCollectorState !== null) {
+      try {
+        restoreProcessCollector(procCollectorState);
       } catch {
         /* defensive */
       }

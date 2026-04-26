@@ -17,8 +17,8 @@ const PREFIX = "simsys_"
 // so a misuse logs once per process rather than spamming on every
 // register call.
 var (
-	warnedMissingService    = map[string]struct{}{}
-	warnedMissingServiceMu  sync.Mutex
+	warnedMissingService   = map[string]struct{}{}
+	warnedMissingServiceMu sync.Mutex
 )
 
 // guardName returns name if it starts with PREFIX, else panics.

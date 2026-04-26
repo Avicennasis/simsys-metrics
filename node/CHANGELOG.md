@@ -5,6 +5,75 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.9] — 2026-04-26
+
+Patch release closing four Node-side findings from a follow-up Codex
+audit (one MED/HIGH, three MED). All four regressed pre-fix on Codex's
+exact reproductions; v0.3.9 ships regression coverage for each in
+`tests/install-codex-findings.test.ts`.
+
+### Fixed
+- **F1 — Hono partial install double-stacks middleware on retry**
+  (MED/HIGH). Pre-fix, when `app.get(metricsPath, ...)` threw during
+  install, rollback cleared app props but left the wildcard middleware
+  (`app.use("*", ...)`) wired. A retry then added a SECOND middleware
+  on top, so every subsequent request was counted twice (Codex repro:
+  `simsys_http_requests_total{route="/hello"} = 2` after fail-then-retry).
+  Hono offers no public API to remove a previously-registered route or
+  middleware, so the fix wires both AT MOST ONCE per app and gates them
+  on the live `simsysMetricsInstalled` flag. A failed install leaves
+  the wiring in place but INERT — the recording middleware short-
+  circuits and the `/metrics` route returns 404 — until a retry sets
+  `simsysMetricsInstalled = true` again. Handlers also read service /
+  metrics-path from `appProps` at request time, so a retry with
+  same-shape values (the only retry case the idempotent guard
+  permits) re-arms cleanly without stale closure references.
+- **F2 — Express 5 rollback snapshots the wrong router stack** (MED).
+  Express 5 exposes the router at `app.router`, not `app._router`.
+  Pre-fix snapshot read `app._router?.stack?.length` (always undefined
+  in Express 5) so rollback no-opped — leaving a `/metrics` route layer
+  in the stack on failure. Codex repro: stack `["/metrics"]` after
+  fail, `["/metrics", "/metrics", "mw"]` after retry. Fix prefers
+  `app.router.stack` and falls back to `app._router.stack` so both
+  Express 4 (lazy `_router`) and Express 5 (`router`) truncate cleanly.
+- **F3 — `build_info` rollback could delete a pre-existing sample it
+  did not own** (MED). `started_at` is second-precision, so two
+  installs of the same `service+version+commit` started in the same
+  wall-clock second produce identical labelsets. Pre-fix, install B's
+  rollback unconditionally called `buildInfo.remove(labels)` and
+  silently deleted install A's still-live sample. Fix: new
+  `registerBuildInfo(labels)` helper returns `{labels, wasNew}` tracked
+  via a module-scoped ownership set; rollback uses
+  `unregisterBuildInfoIfOwned(labels, wasNew)` which is a no-op when
+  `wasNew = false`.
+- **F4 — Process-collector rollback did not restore the prior
+  service** (MED). Pre-fix, `registerProcessCollector(svc)` mutated
+  the static `service` global in place during a swap; adapter rollback
+  only restored the baseline `_SERVICE` global, leaving the process
+  collector tagging samples with the failed install's service. Fix:
+  `registerProcessCollector` now returns a `ProcessCollectorRollbackState`
+  capturing the action (`reused` / `registered` / `service-swap`) plus
+  the prior service label; rollback's new `restoreProcessCollector(state)`
+  flips the label back. The swap path also `.reset()`s every collector
+  metric so the swapped-out service's stale gauge samples don't linger
+  between scrapes — prom-client otherwise retains per-labelset entries
+  indefinitely after the labels stop being written.
+
+### Changed
+- `registerProcessCollector(svc)` now returns
+  `ProcessCollectorRollbackState` (was `void`). Adapter install code
+  pairs it with the new `restoreProcessCollector(state)` to undo
+  cleanly on partial install.
+- New helpers: `registerBuildInfo(labels)`,
+  `unregisterBuildInfoIfOwned(labels, wasNew)`,
+  `_resetBuildInfoOwnershipForTests()` exported from `buildinfo.ts`.
+
+### Tests
+- 4 new vitest cases in `tests/install-codex-findings.test.ts`
+  reproducing each Codex finding pre-fix, then verifying the fix.
+- All 38 tests pass; `tsc` clean; `npm pack --dry-run` 43 files;
+  `npm audit --omit=dev --audit-level=moderate` zero vulns.
+
 ## [0.3.8] — 2026-04-25
 
 ### Fixed

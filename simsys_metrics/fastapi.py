@@ -22,8 +22,12 @@ from ._http import (
     normalize_method,
     status_bucket,
 )
-from ._process import register_process_collector, unregister_process_collector
-from .build_info import register_build_info, unregister_build_info
+from ._process import (
+    ProcessCollectorRollbackState,
+    register_process_collector,
+    restore_process_collector,
+)
+from .build_info import register_build_info, unregister_build_info_if_owned
 
 _log = logging.getLogger("simsys_metrics")
 
@@ -122,8 +126,9 @@ def install_fastapi(
     pre_middleware_count = len(app.user_middleware)
     pre_route_count = len(app.router.routes)
     pre_service = _peek_service()
-    proc_collector_was_new = False
+    proc_collector_state: Optional[ProcessCollectorRollbackState] = None
     build_info_labels: Optional[tuple[str, str, str, str]] = None
+    build_info_was_new = False
 
     try:
         set_service(service)
@@ -132,8 +137,8 @@ def install_fastapi(
         # workers would be meaningless. Per-process CPU/RSS/FDs gauges are a
         # known limitation of multiproc mode.
         if not multiproc_dir:
-            _, proc_collector_was_new = register_process_collector(service)
-        build_info_labels = register_build_info(
+            _, proc_collector_state = register_process_collector(service)
+        build_info_labels, build_info_was_new = register_build_info(
             service=service, version=version, commit=commit
         )
 
@@ -228,24 +233,28 @@ def install_fastapi(
             pass
 
         # Undo process-wide prom-client mutations:
-        #   * Drop the simsys_build_info label-set we set, so a retry
-        #     doesn't leave two samples with different started_at values
-        #     for the same service/version/commit.
-        #   * Unregister the SimsysProcessCollector if THIS install was
-        #     the one that registered it (was_new=True). If the collector
-        #     was already there for a different service, an earlier
-        #     install owns it; don't touch.
+        #   * Drop the simsys_build_info label-set ONLY if THIS install
+        #     created it (was_new=True). When was_new=False, an earlier
+        #     same-second install of the same service+version+commit
+        #     already owns the labelset (started_at is second-precision)
+        #     and removing it would silently delete that install's
+        #     legitimate sample.
+        #   * Restore the SimsysProcessCollector to its pre-install
+        #     state. If we registered fresh, drop it; if we did a
+        #     service-swap, re-register the prior collector so that
+        #     install's process metrics keep flowing; if we just reused
+        #     an existing collector, leave it alone.
         #   * Restore the _SERVICE global to its pre-install value so
         #     consumer code that reads get_service() doesn't see a
         #     half-installed identity.
         if build_info_labels is not None:
             try:
-                unregister_build_info(*build_info_labels)
+                unregister_build_info_if_owned(build_info_labels, build_info_was_new)
             except Exception:  # pragma: no cover — defensive
                 pass
-        if proc_collector_was_new:
+        if proc_collector_state is not None:
             try:
-                unregister_process_collector()
+                restore_process_collector(proc_collector_state)
             except Exception:  # pragma: no cover — defensive
                 pass
         try:
