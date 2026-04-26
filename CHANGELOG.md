@@ -5,6 +5,21 @@ All notable changes to `simsys-metrics` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] — 2026-04-26 — Node only
+
+Minor release to the Node package. Python + Go versions unchanged.
+
+### Added (Node)
+- **`@simsys/metrics` 0.4.0** — Next.js standalone adapter
+  (`installNext()`) plus `@simsys/metrics/next/route` GET handler.
+  Same baseline + per-request HTTP instrumentation as the existing
+  Express + Hono adapters; targets the BFR Next.js cohort
+  (leadership / line-portal / board-portal / roster) and any other
+  Next.js consumer on the fleet. Cardinality-bounded route
+  bucketing (`:id` / `:uuid` / `__deep__`) plus opt-in
+  `routeTemplates` for high-fidelity overrides. See
+  `node/CHANGELOG.md` for the full entry.
+
 ## [0.3.10] — 2026-04-26
 
 Patch release closing seven self-audit findings on top of v0.3.9. The

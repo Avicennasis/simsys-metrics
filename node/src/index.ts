@@ -45,6 +45,13 @@ import {
   EXEMPT_PATHS as HONO_EXEMPT,
 } from "./adapters/hono.js";
 
+export {
+  installNext,
+  bucketRoute,
+  type NextInstallOpts,
+  type RouteTemplate,
+} from "./adapters/next.js";
+
 // Re-export for advanced consumers who want to pin to a specific adapter.
 export {
   installExpress,

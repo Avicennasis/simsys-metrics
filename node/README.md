@@ -123,6 +123,66 @@ export default app;
 + `.use()`; Hono: `.fetch()` + `.route()`). Pass `metricsPath: "/internal/metrics"`
 to override the default `/metrics`.
 
+### Next.js (App Router, standalone)
+
+Next.js standalone has no Express-style `app` object to `.use()` middleware on,
+so `installNext()` is called from `instrumentation.ts` (Next's official
+server-startup hook) and the metrics endpoint is mounted as a normal route
+handler:
+
+```ts
+// instrumentation.ts — at the project root
+export async function register() {
+  if (process.env.NEXT_RUNTIME !== "nodejs") return;
+  const { installNext } = await import("@simsys/metrics");
+  const pkg = await import("./package.json", { assert: { type: "json" } });
+  installNext({
+    service: "leadership",
+    version: pkg.default.version,
+  });
+}
+```
+
+```ts
+// app/api/metrics/route.ts
+export { GET } from "@simsys/metrics/next/route";
+export const dynamic = "force-dynamic";
+```
+
+That's it. `installNext()` patches `http.Server.prototype.emit` to capture every
+request finish (the same trick OpenTelemetry's Next instrumentation uses), so
+every authenticated route, RSC stream, and API handler is recorded through one
+mechanism. Default `metricsPath` is `/api/metrics`; override via
+`installNext({ metricsPath: "/internal/metrics", ... })` if you need a different
+mount point.
+
+#### Route-label cardinality
+
+At the `http.Server.emit` layer, Next.js doesn't expose the matched route
+template, so the adapter buckets paths automatically:
+
+- `/api/shifts/12345` → `route="/api/shifts/:id"`
+- `/api/applicants/3f8b6c4a-...` → `route="/api/applicants/:uuid"`
+- query strings + `#hash` are stripped before bucketing
+- paths > 5 segments collapse to `/<a>/<b>/__deep__`
+
+For high-fidelity custom labels, pass `routeTemplates`:
+
+```ts
+installNext({
+  service: "leadership",
+  version: pkg.version,
+  routeTemplates: [
+    {
+      pattern: /^\/api\/users\/[^/]+\/profile$/,
+      template: "/api/users/:user/profile",
+    },
+  ],
+});
+```
+
+Templates win over default bucketing.
+
 ### Queue depth
 
 ```ts

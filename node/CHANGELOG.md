@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] — 2026-04-26
+
+Minor release: Next.js standalone adapter. Same simsys baseline + per-request
+HTTP instrumentation as the Express + Hono adapters, suitable for the BFR
+internal-app cohort and any other Next.js consumer. No breaking changes;
+Express + Hono adapters untouched.
+
+### Added
+- **`installNext(opts)`** — Next.js adapter for App Router / standalone
+  builds. Patches `http.Server.prototype.emit` to capture every request
+  finish (the same trick OpenTelemetry's Next instrumentation uses) so
+  every authenticated route, RSC stream, and API handler is recorded
+  through one mechanism. Registers the simsys baseline on call:
+  `setService`, `registerProcessCollector`, `registerNodeDefaultMetrics`,
+  `registerBuildInfo`. Idempotent via a process-global sentinel that
+  survives Next dev-mode hot-reload (resetting the sentinel re-arms a
+  clean install).
+- **`@simsys/metrics/next/route`** — drop-in `GET` handler for
+  `app/api/metrics/route.ts`, mountable as `export { GET } from
+  "@simsys/metrics/next/route";`. New `package.json` `exports` subpath.
+- **`bucketRoute(url, templates?)`** — pure function exported for
+  consumer introspection / unit tests. Strips query strings + hash,
+  collapses numeric segments to `:id`, UUID segments to `:uuid`, and
+  paths > 5 segments to `/<a>/<b>/__deep__`. Accepts an optional
+  `routeTemplates: Array<{pattern: RegExp, template: string}>` for
+  high-fidelity overrides — templates win over default bucketing.
+
+### Tests
+- 20 vitest cases in `tests/next.test.ts` covering: build_info
+  registration, HTTP request recording on a vanilla `http.Server`,
+  metrics-path exemption (`/api/metrics` not recorded), numeric-id +
+  UUID + deep-path bucketing, query-string stripping, custom
+  `routeTemplates` precedence, idempotency, status / method
+  normalization, hot-reload simulation, opts validation, route handler
+  text-format response.
+
+### Notes
+- The adapter targets BFR's 4 Next.js standalone apps (leadership,
+  line-portal, board-portal, roster) plus any other Next.js consumer
+  on the fleet. Roster uses `next-auth` instead of Firebase — the
+  baseline metric coverage is identical regardless.
+
 ## [0.3.10] — 2026-04-26
 
 Patch release closing four Node-side findings from a v0.3.9 self-audit:

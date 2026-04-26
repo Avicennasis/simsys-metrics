@@ -1,12 +1,22 @@
 {
   "name": "@simsys/metrics",
-  "version": "0.3.10",
-  "description": "Drop-in Prometheus /metrics template for Node.js web apps (Express 5 + Bun/Hono)",
+  "version": "0.4.0",
+  "description": "Drop-in Prometheus /metrics template for Node.js web apps (Express 5 + Bun/Hono + Next.js)",
   "license": "MIT",
   "author": "Avicennasis",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./next/route": {
+      "types": "./dist/adapters/next-route.d.ts",
+      "default": "./dist/adapters/next-route.js"
+    }
+  },
   "engines": {
     "node": ">=18"
   },
