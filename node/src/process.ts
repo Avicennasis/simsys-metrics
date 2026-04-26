@@ -75,23 +75,28 @@ export function registerProcessCollector(
       return { action: "reused" };
     }
     // Re-install with a different service: refresh the static label so
-    // future collect() callbacks tag samples with the new service. Capture
-    // the prior service so adapter rollback can put it back if a later
-    // step in the same install attempt fails.
+    // future collect() callbacks tag samples with the new service.
     //
-    // Reset all per-labelset state on swap. prom-client gauges/counters
-    // retain entries for prior labelsets indefinitely; without a reset,
-    // future scrapes would emit stale samples for the swapped-out
-    // service alongside the live ones. Python's _process.py achieves
-    // the same cleanliness by unregistering the old collector and
-    // registering a brand-new one.
+    // Drop ONLY the prior service's labelsets via .remove(...) — NOT
+    // .reset() the whole metric. Resetting zeros the Counter for every
+    // labelset (Prometheus reads it as a counter reset and gaps the
+    // rate() series); .remove(prior) drops just the swapped-out
+    // labelset so the live service's accumulator stays monotonic.
+    //
+    // Also: do NOT zero lastCpuSeconds. The cumulative process CPU is a
+    // process-level value; preserving lastCpuSeconds means the next
+    // collect() inc()s the new service's counter by a small delta from
+    // the current cumulative, not by the full cumulative-from-zero
+    // (which would create a one-scrape spike artifact).
     const priorService = service ?? "";
     service = svc;
-    lastCpuSeconds = 0;
-    cpuTotal?.reset();
-    memoryBytes?.reset();
-    openFds?.reset();
-    uptimeSeconds?.reset();
+    cpuTotal?.remove({ service: priorService });
+    memoryBytes?.remove({ service: priorService, type: "rss" });
+    memoryBytes?.remove({ service: priorService, type: "heapUsed" });
+    memoryBytes?.remove({ service: priorService, type: "heapTotal" });
+    memoryBytes?.remove({ service: priorService, type: "external" });
+    openFds?.remove({ service: priorService });
+    uptimeSeconds?.remove({ service: priorService });
     return { action: "service-swap", priorService };
   }
   service = svc;
@@ -179,22 +184,32 @@ export function restoreProcessCollector(
       return;
     case "service-swap":
       // We mutated the static `service` global in place — restore it.
-      // The Counter/Gauge instances are reused, so collect() callbacks
-      // will resume tagging samples with the prior service value.
+      // Drop the failed install's service labelset (the symmetric
+      // counterpart to the swap-time .remove of the prior service)
+      // via .remove(...), NOT .reset(). Reset would zero every
+      // labelset including the prior one Prometheus has been scraping,
+      // creating a counter-reset artifact in rate() — .remove drops
+      // just the failed install's labelset and leaves the prior
+      // service's accumulator intact and monotonic.
       //
-      // BUT: prom-client retains per-labelset state, so the
-      // service-swap window's B-labelled gauge samples linger in the
-      // metric's hashmap as stale values. Reset all of them here so
-      // future scrapes only contain the restored A-labelled samples
-      // (collect() will re-populate them on the next scrape).
-      // lastCpuSeconds is also reset so the Counter's delta-tracking
-      // doesn't undershoot after the wipe.
-      service = state.priorService;
-      lastCpuSeconds = 0;
-      cpuTotal?.reset();
-      memoryBytes?.reset();
-      openFds?.reset();
-      uptimeSeconds?.reset();
+      // Do NOT zero lastCpuSeconds: the prior service's collect()
+      // resumes from the current cumulative, attributing only the
+      // delta-since-prior-collect to it. Resetting would make the
+      // very first post-rollback inc() jump the counter by the full
+      // process-cumulative CPU.
+      {
+        const failedService = service ?? "";
+        service = state.priorService;
+        if (failedService && failedService !== state.priorService) {
+          cpuTotal?.remove({ service: failedService });
+          memoryBytes?.remove({ service: failedService, type: "rss" });
+          memoryBytes?.remove({ service: failedService, type: "heapUsed" });
+          memoryBytes?.remove({ service: failedService, type: "heapTotal" });
+          memoryBytes?.remove({ service: failedService, type: "external" });
+          openFds?.remove({ service: failedService });
+          uptimeSeconds?.remove({ service: failedService });
+        }
+      }
       return;
     case "registered":
       // We registered fresh — drop everything.

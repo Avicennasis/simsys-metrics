@@ -5,6 +5,99 @@ All notable changes to `simsys-metrics` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.10] — 2026-04-26
+
+Patch release closing seven self-audit findings on top of v0.3.9. The
+audit was run by three parallel reviews (focused diff review,
+concurrency hunt, cross-implementation consistency check) and surfaced
+both bugs introduced by v0.3.9's ownership/rollback redesign and
+latent issues that v0.3.9 didn't cover.
+
+### Fixed
+- **F6 — Python `build_info` ownership lock too narrow** (HIGH).
+  `register_build_info` released `_owned_label_keys_lock` between the
+  set mutation and the `build_info.labels(...).set(1)` call. A
+  concurrent `unregister_build_info_if_owned` for the same labels
+  could discard the key + remove the gauge sample in that window;
+  the in-flight register's eventual `.set(1)` would then create an
+  unowned sample whose subsequent rollback would silently delete the
+  next install's owned sample. Fix holds the lock across both the
+  set update AND the gauge mutation in `register_build_info`,
+  `unregister_build_info`, and `unregister_build_info_if_owned`.
+- **F7 — Python `restore_process_collector` no longer clobbers a
+  concurrent install's collector** (HIGH). `restore_process_collector`
+  unconditionally dropped or swapped `_collector` regardless of
+  whether the live collector was still the instance THIS install
+  had registered. A concurrent install that swapped the singleton
+  mid-rollback would have its collector silently unregistered. Fix
+  records `installed_collector` in `ProcessCollectorRollbackState`
+  and only mutates the live `_collector` if `_collector is
+  state.installed_collector` — otherwise rollback no-ops on the
+  live collector (the concurrent install owns it now).
+- **F8 / F11 — Node process-collector swap no longer creates a
+  Prometheus counter-reset artifact and no longer races with
+  in-flight scrapes** (HIGH/MED, Node). v0.3.9's swap path called
+  `cpuTotal.reset()` and zeroed `lastCpuSeconds` synchronously.
+  The reset zeroed every labelset (Prometheus reads it as a counter
+  reset and gaps `rate()`), and the lastCpuSeconds=0 mutation made
+  the next collect inc by the full process-cumulative CPU (visible
+  spike). Replaced with `metric.remove({service: priorService})`
+  which drops only the swapped-out labelset, and `lastCpuSeconds`
+  is now preserved so the new service's collect() inc()s by a
+  small delta. The same shape applies to the rollback path. Net
+  effect: Prometheus sees A's series end (stale) and B's series
+  start fresh — no spike, no reset.
+- **F9 — Hono adapter now respects `app.basePath()`** (MED, Node).
+  Pre-fix, the metrics-path exemption compared `c.req.path ===
+  livePath` where `livePath` was the install-time `metricsPath`
+  argument. With `new Hono().basePath("/api")`, requests arrive at
+  `/api/metrics` and the exemption failed — the metrics scrape got
+  recorded as a regular instrumented request. Fix reads
+  `app._basePath` at install time and stores the absolute URL
+  (`/api/metrics`) as `appProps.simsysMetricsPath`; the runtime
+  comparison now matches Hono's actual routing.
+- **F10 — `started_at` format aligned across Python/Node/Go** (MED).
+  Pre-fix, Python emitted `2026-04-26T10:30:00+00:00` while Node
+  and Go emitted `2026-04-26T10:30:00Z`. Cross-implementation
+  `simsys_build_info` samples for the same service/version/commit
+  had non-equal label tuples, breaking the unified-contract claim
+  in the README. Python now uses
+  `strftime("%Y-%m-%dT%H:%M:%SZ")`.
+- **F12 — Hono idempotency warning includes `metricsPath`
+  mismatch** (LOW). Pre-fix, the second-install warning fired only
+  on service/version mismatch; a different `metricsPath` was a
+  silent no-op (route is stuck at the first install's path). The
+  warning now compares the absolute metricsPath as well so
+  re-install with a different path tells the caller why their new
+  path is 404ing.
+- **F16 — Python `_peek_service` reads under the lock** (LOW).
+  Pre-fix, `_peek_service` dereferenced `_SERVICE` without holding
+  `_SERVICE_LOCK`. Concurrent installs could observe torn or stale
+  snapshots. One-line fix.
+
+### Changed
+- `register_process_collector(service)` now returns
+  `ProcessCollectorRollbackState(action, prior_collector,
+  installed_collector)` — added `installed_collector` for the
+  identity check on rollback.
+- `register_build_info` (Python) now emits `started_at` with `Z`
+  suffix (was `+00:00`). User-visible label format change — Grafana
+  dashboards comparing `started_at` against literal strings should
+  switch to ends-with-Z matching if any were strict-equality. The
+  format is the same as Node/Go.
+
+### Tests
+- `tests/test_install_self_audit_v0310.py` — 5 new pytest cases
+  (F6 lock-scope coherence, F7 no-clobber on concurrent swap, F7
+  third-swap variant, F10 Z-suffix, F16 _peek_service round-trip).
+- `node/tests/install-self-audit-v0310.test.ts` — 4 new vitest
+  cases (F8/F11 swap counter monotonicity, F9 basePath
+  exemption, F12 metricsPath warning, F12 silent-when-match).
+- Verification: ruff clean, pytest 93 passed, go vet/test/test
+  -race/staticcheck/gofmt -l clean, npm build clean, npm test
+  42 passed, npm pack 43 files, npm audit 0 vulns, conformance
+  smoke green on port 8877.
+
 ## [0.3.9] — 2026-04-26
 
 Patch release closing five findings from a follow-up Codex audit (one

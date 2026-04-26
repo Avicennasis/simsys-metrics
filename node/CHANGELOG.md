@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.10] — 2026-04-26
+
+Patch release closing four Node-side findings from a v0.3.9 self-audit:
+
+### Fixed
+- **F8 / F11 — Service-swap no longer creates a Prometheus
+  counter-reset artifact** (HIGH/MED). v0.3.9's swap path called
+  `cpuTotal.reset()` (zeroing every labelset, observed by Prometheus
+  as a counter reset) and zeroed `lastCpuSeconds` (making the next
+  collect inc by full process-cumulative CPU — visible counter
+  spike). Replaced with `metric.remove({service: priorService})`
+  which drops ONLY the swapped-out labelset and leaves the live
+  service's accumulator monotonic. `lastCpuSeconds` is now
+  preserved so the new service's first collect inc by a small
+  delta-since-prior-collect. The rollback path uses the same
+  per-labelset remove for symmetry.
+- **F9 — Hono `app.basePath()` now respected** (MED). Pre-fix, the
+  metrics-path exemption compared `c.req.path === livePath` where
+  `livePath` was the install-time `metricsPath` argument
+  ("/metrics"). With `new Hono().basePath("/api")`, requests
+  arrive at `/api/metrics` and the equality failed — `/metrics`
+  scrapes were counted as instrumented requests. Fix reads
+  `app._basePath` at install time and stores the absolute URL
+  ("/api/metrics") in `appProps.simsysMetricsPath`; the runtime
+  exemption check now matches Hono's actual routing.
+- **F12 — Idempotency warning includes `metricsPath` mismatch**
+  (LOW). Pre-fix, second-install with a different metricsPath but
+  same service/version was a silent no-op (route is stuck at the
+  first install's path). The warning now compares all three.
+
+### Changed
+- `registerProcessCollector(svc)` swap path now uses
+  `metric.remove({service: priorService, ...})` instead of
+  `metric.reset()`. No counter-reset artifact in Prometheus.
+- `installHono(app, opts)` now reads `app._basePath` (Hono
+  internal) at install time and stores the absolute metrics URL.
+  No API change for callers — the published interface is
+  unchanged.
+
+### Tests
+- 4 new vitest cases in `tests/install-self-audit-v0310.test.ts`
+  (F8/F11 counter monotonicity across swap, F9 basePath
+  exemption, F12 metricsPath-mismatch warning, F12
+  silent-when-all-match).
+
 ## [0.3.9] — 2026-04-26
 
 Patch release closing four Node-side findings from a follow-up Codex

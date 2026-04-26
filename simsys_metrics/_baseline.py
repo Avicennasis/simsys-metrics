@@ -73,8 +73,16 @@ def set_service(service: Optional[str]) -> None:
 
 def _peek_service() -> Optional[str]:
     """Return the current service label without raising. Used by install
-    rollback to capture pre-state before mutating."""
-    return _SERVICE
+    rollback to capture pre-state before mutating.
+
+    Lock-protected: ``_SERVICE`` is read under ``_SERVICE_LOCK`` so a
+    concurrent ``set_service()`` can't tear the read or leave the
+    snapshot reflecting a half-applied write. Without this lock, two
+    parallel installs could observe stale snapshots of each other's
+    pre-state and overwrite the wrong value on rollback.
+    """
+    with _SERVICE_LOCK:
+        return _SERVICE
 
 
 def get_service() -> str:

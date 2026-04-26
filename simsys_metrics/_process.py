@@ -39,10 +39,19 @@ class ProcessCollectorRollbackState:
       * ``"service_swap"`` — collector existed but for a different service; we
                               unregistered it, registered a new one. Rollback
                               drops the new one and re-registers the prior.
+
+    ``installed_collector`` is the collector instance THIS install put in
+    the singleton slot. Rollback verifies the live ``_collector`` is
+    still that exact instance before unregistering — if a concurrent
+    install has since swapped the singleton out, rollback no-ops on the
+    live collector to avoid clobbering the concurrent install's
+    metrics. Without this identity check, restore_process_collector
+    can silently unregister a different service's collector.
     """
 
     action: str  # "reused" | "registered" | "service_swap"
     prior_collector: Optional["SimsysProcessCollector"] = None
+    installed_collector: Optional["SimsysProcessCollector"] = None
 
 
 class SimsysProcessCollector:
@@ -123,18 +132,31 @@ def register_process_collector(
                 _collector = SimsysProcessCollector(service)
                 REGISTRY.register(_collector)
                 return _collector, ProcessCollectorRollbackState(
-                    action="service_swap", prior_collector=prior
+                    action="service_swap",
+                    prior_collector=prior,
+                    installed_collector=_collector,
                 )
-            return _collector, ProcessCollectorRollbackState(action="reused")
+            return _collector, ProcessCollectorRollbackState(
+                action="reused", installed_collector=_collector
+            )
         _collector = SimsysProcessCollector(service)
         REGISTRY.register(_collector)
-        return _collector, ProcessCollectorRollbackState(action="registered")
+        return _collector, ProcessCollectorRollbackState(
+            action="registered", installed_collector=_collector
+        )
 
 
 def restore_process_collector(state: ProcessCollectorRollbackState) -> None:
     """Undo whatever register_process_collector() did, given its returned
     rollback state. Called from adapter install rollback when a later
     step fails.
+
+    Identity-checked: only unregisters / replaces the live ``_collector``
+    if it's still the exact instance THIS install put there. If a
+    concurrent install has swapped the singleton out from under us
+    between registration and rollback, leave the live collector alone
+    — the concurrent install owns it now, and rolling back the live
+    collector would silently break the concurrent install's metrics.
     """
     global _collector
     if state.action == "reused":
@@ -142,8 +164,11 @@ def restore_process_collector(state: ProcessCollectorRollbackState) -> None:
         return
     with _lock:
         if state.action == "registered":
-            # We registered fresh. Drop everything.
-            if _collector is not None:
+            # We registered fresh. Drop the collector ONLY if the live
+            # one is still our instance — a concurrent install may have
+            # swapped it out, in which case our rollback isn't entitled
+            # to touch the new owner's collector.
+            if _collector is not None and _collector is state.installed_collector:
                 try:
                     REGISTRY.unregister(_collector)
                 except KeyError:
@@ -153,23 +178,26 @@ def restore_process_collector(state: ProcessCollectorRollbackState) -> None:
         if state.action == "service_swap":
             # Drop the new collector and re-register the prior one so
             # the previously-installed service's process metrics keep
-            # flowing. If `register` is rejected for an already-
-            # registered name (shouldn't happen — we just unregistered
-            # the new one), swallow it; the prior collector still owns
-            # its registration.
-            if _collector is not None:
+            # flowing — but only if the live collector is still the
+            # one we installed. If a third install has since swapped
+            # again, we leave that install's collector in place.
+            if _collector is not None and _collector is state.installed_collector:
                 try:
                     REGISTRY.unregister(_collector)
                 except KeyError:
                     pass
-            if state.prior_collector is not None:
-                try:
-                    REGISTRY.register(state.prior_collector)
-                except ValueError:
-                    pass
-                _collector = state.prior_collector
-            else:
-                _collector = None
+                if state.prior_collector is not None:
+                    try:
+                        REGISTRY.register(state.prior_collector)
+                    except ValueError:
+                        # Already registered — shouldn't happen since we
+                        # just unregistered our installed collector and
+                        # the prior was unregistered at swap time, but
+                        # be defensive.
+                        pass
+                    _collector = state.prior_collector
+                else:
+                    _collector = None
             return
 
 

@@ -66,16 +66,34 @@ export function installHono(app: HonoLike, opts: HonoInstallOpts): HonoLike {
   // cardinality bug).
   const appProps = app as Record<string | symbol, unknown>;
   if (appProps.simsysMetricsInstalled) {
+    // The /metrics route is registered against the FIRST install's
+    // metricsPath; subsequent re-installs with a different
+    // metricsPath silently no-op without moving the route. Warn so
+    // callers don't end up debugging a 404 on a path they thought
+    // they'd configured.
+    const priorMetricsPath = appProps.simsysMetricsPath;
+    // The stored simsysMetricsPath is the ABSOLUTE path (basePath +
+    // metricsPath) — compute the same shape for the new call so we
+    // compare apples to apples.
+    const honoBasePath =
+      ((app as Record<string, unknown>)._basePath as string | undefined) ?? "";
+    const newAbsoluteMetricsPath =
+      honoBasePath && honoBasePath !== "/"
+        ? honoBasePath.replace(/\/+$/, "") + metricsPath
+        : metricsPath;
     if (
       appProps.simsysService !== service ||
-      appProps.simsysVersion !== version
+      appProps.simsysVersion !== version ||
+      priorMetricsPath !== newAbsoluteMetricsPath
     ) {
       // eslint-disable-next-line no-console
       console.warn(
         `[simsys-metrics] install() called again on the same Hono app ` +
-          `with different service/version (${String(appProps.simsysService)}/` +
-          `${String(appProps.simsysVersion)} vs ${service}/${version}); the ` +
-          `new values are IGNORED. To re-init, drop ` +
+          `with different service/version/metricsPath ` +
+          `(${String(appProps.simsysService)}/` +
+          `${String(appProps.simsysVersion)}/${String(priorMetricsPath)} vs ` +
+          `${service}/${version}/${newAbsoluteMetricsPath}); the new values ` +
+          `are IGNORED. To re-init, drop ` +
           `app.simsysMetricsInstalled first.`,
       );
     }
@@ -109,7 +127,22 @@ export function installHono(app: HonoLike, opts: HonoInstallOpts): HonoLike {
     appProps.simsysExemptPaths = buildExemptPaths(metricsPath);
     appProps.simsysService = service;
     appProps.simsysVersion = version;
-    appProps.simsysMetricsPath = metricsPath;
+    // Absolute URL path the metrics endpoint will respond on — Hono's
+    // `app.basePath("/api")` prepends "/api" to every registered route,
+    // including `app.get(metricsPath, ...)`. The middleware's
+    // metrics-path exemption compares against `c.req.path`, which is
+    // the raw incoming URL — so the exemption check needs the absolute
+    // path, not the install-time `metricsPath` argument. Read
+    // `_basePath` (Hono internal) to compute it once at install time;
+    // basePath is fixed on the app instance (Hono's basePath() returns
+    // a clone), so this is stable for the app's lifetime.
+    const honoBasePath =
+      ((app as Record<string, unknown>)._basePath as string | undefined) ?? "";
+    const absoluteMetricsPath =
+      honoBasePath && honoBasePath !== "/"
+        ? honoBasePath.replace(/\/+$/, "") + metricsPath
+        : metricsPath;
+    appProps.simsysMetricsPath = absoluteMetricsPath;
 
     // Hono offers no public API for removing a previously-registered
     // route or middleware. So instead of mutating-and-rolling-back, we

@@ -94,20 +94,32 @@ def register_build_info(
     if commit is None:
         commit = _detect_commit()
     if started_at is None:
-        started_at = (
-            _dt.datetime.now(_dt.timezone.utc).replace(microsecond=0).isoformat()
-        )
+        # ISO-8601 UTC with the trailing 'Z' suffix to match the Node and
+        # Go implementations exactly. ``.isoformat()`` would emit
+        # ``+00:00`` instead, breaking cross-implementation label-tuple
+        # equality on simsys_build_info.
+        started_at = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     labels = (service, version, commit, started_at)
+    # Hold the lock across the gauge mutation so a concurrent rollback
+    # can't observe an intermediate state where the key is in
+    # ``_owned_label_keys`` but the gauge sample has not yet been
+    # written (or vice versa). Without this, a thread B that calls
+    # ``unregister_build_info_if_owned`` for the same labels between
+    # thread A's ``set.add`` and ``.set(1)`` would discard the key and
+    # remove the gauge sample, then A's ``.set(1)`` would re-create the
+    # sample with no corresponding ownership entry — a future rollback
+    # by A (still holding ``was_new=True`` on the stack) would then
+    # remove a sample whose ownership has already been transferred.
     with _owned_label_keys_lock:
         was_new = labels not in _owned_label_keys
         if was_new:
             _owned_label_keys.add(labels)
-    build_info.labels(
-        service=service,
-        version=version,
-        commit=commit,
-        started_at=started_at,
-    ).set(1)
+        build_info.labels(
+            service=service,
+            version=version,
+            commit=commit,
+            started_at=started_at,
+        ).set(1)
     return labels, was_new
 
 
@@ -122,13 +134,16 @@ def unregister_build_info(
     ownership flag returned from :func:`register_build_info`.
     """
     labels = (service, version, commit, started_at)
+    # Same lock-scope rationale as register_build_info: hold the lock
+    # across both the ownership-set update AND the gauge mutation so a
+    # concurrent registration can't observe a torn intermediate state.
     with _owned_label_keys_lock:
         _owned_label_keys.discard(labels)
-    try:
-        build_info.remove(service, version, commit, started_at)
-    except KeyError:
-        # Already gone — fine.
-        pass
+        try:
+            build_info.remove(service, version, commit, started_at)
+        except KeyError:
+            # Already gone — fine.
+            pass
 
 
 def unregister_build_info_if_owned(
@@ -144,12 +159,13 @@ def unregister_build_info_if_owned(
     """
     if not was_new:
         return
+    # Same lock-scope rationale as register_build_info.
     with _owned_label_keys_lock:
         _owned_label_keys.discard(labels)
-    try:
-        build_info.remove(*labels)
-    except KeyError:
-        pass
+        try:
+            build_info.remove(*labels)
+        except KeyError:
+            pass
 
 
 def _reset_build_info_ownership_for_tests() -> None:
