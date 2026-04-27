@@ -5,6 +5,53 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.2] — 2026-04-27 — Node only
+
+Patch release fixing the Phase 3 Next.js empty-`/metrics`-body bug. Closes
+the gap that v0.4.0 introduced and v0.4.1 didn't address.
+
+### Fixed
+- **F25 — Next.js `/metrics` endpoint returned HELP/TYPE only, no
+  samples** (HIGH). Webpack standalone bundling inlines this package
+  into multiple server chunks (e.g. `instrumentation.ts` and
+  `app/api/metrics/route.ts` each get their own copy of `registry.ts`).
+  Each chunk's module-instance constructed its own `new Registry()` and
+  its own `Counter`/`Gauge`/`Histogram` instances at module top-level,
+  so `installNext()` wrote samples to one registry while the route
+  handler's `registry.metrics()` read from another. The metric
+  *definitions* (HELP/TYPE) appeared in the response because the
+  registration side-effect runs in every chunk's module-load; the
+  *samples* didn't because the `set()`/`inc()` calls all targeted the
+  instrumentation chunk's registry. `simsys_build_info` was therefore
+  also missing in Prometheus, even though Next's `up=1` made the scrape
+  look healthy.
+
+  Fix: every stateful singleton — the `Registry`, all baseline metric
+  instances, the default-metrics-registered flag, the missing-`service`
+  warning Set, the `_service` and queue-timer state in `baseline.ts`,
+  the `_ownedLabelKeys` Set in `buildinfo.ts`, and the
+  `registered`/`service`/metric refs/`lastCpuSeconds`/`cpuCollectMutex`
+  state in `process.ts` — is now pinned to `globalThis` via `??=`. A
+  second module-instance import (whatever caused the duplication)
+  short-circuits state construction and re-exports the singletons stored
+  by the first load. Identity-stable references regardless of bundler
+  chunking. Belt-and-suspenders alongside Next's
+  `serverExternalPackages: ["@simsys/metrics", "prom-client"]` config.
+
+  New regression test `tests/registry-chunk-split.test.ts` verifies that
+  `vi.resetModules()` followed by re-import yields the same `registry`,
+  `buildInfo`, `httpRequestsTotal` instances; that baseline `_service`
+  state survives reloads; that `_ownedLabelKeys` ownership tracking is
+  shared; and that samples written via the first import appear in
+  `metrics()` output read via the second.
+
+### Verified
+- All four BFR Next.js apps (leadership, line-portal, board-portal,
+  roster) had previously been unblocked by adding `@simsys/metrics` and
+  `prom-client` to each `next.config.js`'s `serverExternalPackages`.
+  This release lets future Next.js consumers skip that step (though it
+  remains the recommended best practice).
+
 ## [0.4.1] — 2026-04-26 — Node only
 
 Patch release closing six self-audit findings on top of v0.4.0. Three

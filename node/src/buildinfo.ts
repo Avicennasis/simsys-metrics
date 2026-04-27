@@ -17,7 +17,7 @@ export type BuildInfoLabels = {
   started_at: string;
 } & Record<string, string>;
 
-// Module-scoped ownership tracker. When registerBuildInfo() is called
+// Globally-scoped ownership tracker. When registerBuildInfo() is called
 // with a labelset that's already in this set, we know an earlier (still
 // live) install added it — wasNew=false. On rollback, callers pass
 // wasNew back to unregisterBuildInfoIfOwned() so we only call
@@ -28,7 +28,19 @@ export type BuildInfoLabels = {
 // produce identical labelsets. Without ownership tracking, install B's
 // rollback would `buildInfo.remove(labels)` and silently delete install
 // A's still-live sample.
-const _ownedLabelKeys = new Set<string>();
+//
+// Pinned to globalThis so that bundler chunk-splitting (e.g. Next.js
+// inlining buildinfo.ts into both the instrumentation chunk and any
+// chunk that re-uses installNext) doesn't give each chunk its own
+// ownership Set — that would let chunk B's rollback remove chunk A's
+// live sample. See registry.ts header for the full rationale.
+declare global {
+  // eslint-disable-next-line no-var
+  var __simsysMetricsBuildInfoOwned: Set<string> | undefined;
+}
+
+const _ownedLabelKeys: Set<string> = (globalThis.__simsysMetricsBuildInfoOwned ??=
+  new Set<string>());
 
 function _labelKey(labels: BuildInfoLabels): string {
   return [labels.service, labels.version, labels.commit, labels.started_at].join("\x00");

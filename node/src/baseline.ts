@@ -2,15 +2,31 @@
  * Process-wide service state + opt-in helpers (trackQueue, trackJob, safeLabel).
  *
  * Matches `simsys_metrics._baseline` and `simsys_metrics.helpers` (Python).
+ *
+ * Service identity + queue-timer tracking live on `globalThis` so they
+ * survive across bundler chunk-splits — see registry.ts header for the
+ * full rationale.
  */
 
 import { queueDepth, jobsTotal, jobDurationSeconds } from "./registry.js";
 
-let _service: string | null = null;
-const _queueTimers: NodeJS.Timeout[] = [];
+interface SimsysBaselineState {
+  service: string | null;
+  queueTimers: NodeJS.Timeout[];
+}
+
+declare global {
+  // eslint-disable-next-line no-var
+  var __simsysMetricsBaselineState: SimsysBaselineState | undefined;
+}
+
+const _state: SimsysBaselineState = (globalThis.__simsysMetricsBaselineState ??= {
+  service: null,
+  queueTimers: [],
+});
 
 export function setService(service: string | null): void {
-  _service = service;
+  _state.service = service;
 }
 
 /**
@@ -18,16 +34,16 @@ export function setService(service: string | null): void {
  * rollback to capture pre-install state before mutating.
  */
 export function _peekService(): string | null {
-  return _service;
+  return _state.service;
 }
 
 export function getService(): string {
-  if (_service === null) {
+  if (_state.service === null) {
     throw new Error(
       "simsys-metrics: no service set. Call install(app, { service, version }) first.",
     );
   }
-  return _service;
+  return _state.service;
 }
 
 // -------- trackQueue --------
@@ -81,7 +97,7 @@ export function trackQueue(
   if (typeof timer.unref === "function") {
     timer.unref();
   }
-  _queueTimers.push(timer);
+  _state.queueTimers.push(timer);
   return timer;
 }
 
@@ -199,9 +215,9 @@ export function safeLabel(
 // -------- test helpers --------
 
 export function _resetForTests(): void {
-  _service = null;
-  while (_queueTimers.length) {
-    const t = _queueTimers.pop();
+  _state.service = null;
+  while (_state.queueTimers.length) {
+    const t = _state.queueTimers.pop();
     if (t) clearInterval(t);
   }
 }

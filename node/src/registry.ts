@@ -4,6 +4,22 @@
  * Every simsys metric is forced to start with `simsys_` — the guards make it
  * impossible to accidentally ship a metric under a bare name when using this
  * package. Matches `simsys_metrics._registry` (Python).
+ *
+ * Identity stability across bundler chunk-splitting:
+ * Next.js / webpack standalone bundling can inline this module into multiple
+ * server chunks (e.g. `instrumentation.ts` and `app/api/metrics/route.ts`
+ * land in different chunks). Each chunk gets its own module-instance scope,
+ * so plain `export const registry = new Registry()` would create one
+ * Registry per chunk — `installNext()` writes samples to one, the route
+ * handler reads from the other, and `/metrics` returns HELP/TYPE only.
+ *
+ * Defence: every stateful singleton (the registry, every baseline metric,
+ * the default-metrics-registered flag, the missing-service warning Set)
+ * is pinned to `globalThis` via `??=`. A second module-instance import
+ * skips construction and re-exports the singletons stored by the first
+ * load. Consumers get identity-stable references regardless of how the
+ * bundler chunked them. Belt-and-suspenders alongside Next's
+ * `serverExternalPackages: ["@simsys/metrics", "prom-client"]` config.
  */
 
 import {
@@ -16,12 +32,26 @@ import {
 
 export const PREFIX = "simsys_";
 
-/**
- * The simsys-owned Prometheus registry. We do NOT use prom-client's default
- * global registry so consumer apps can host their own metrics side-by-side
- * without collisions, and so tests can reset cleanly.
- */
-export const registry = new Registry();
+interface SimsysRegistryState {
+  registry: Registry;
+  httpRequestsTotal: Counter;
+  httpRequestDurationSeconds: Histogram;
+  buildInfo: Gauge;
+  queueDepth: Gauge;
+  jobsTotal: Counter;
+  jobDurationSeconds: Histogram;
+  progressProcessedTotal: Counter;
+  progressRemaining: Gauge;
+  progressRatePerSecond: Gauge;
+  progressEstimatedCompletionTimestamp: Gauge;
+  defaultMetricsRegistered: boolean;
+  warnedMissingService: Set<string>;
+}
+
+declare global {
+  // eslint-disable-next-line no-var
+  var __simsysMetricsRegistryState: SimsysRegistryState | undefined;
+}
 
 function guardName(name: string): string {
   if (typeof name !== "string" || !name.startsWith(PREFIX)) {
@@ -32,9 +62,86 @@ function guardName(name: string): string {
   return name;
 }
 
-// Tracks metric names we've already warned about, to keep the warning
-// to once per process rather than spamming on every registration call.
-const warnedMissingService = new Set<string>();
+function initRegistryState(): SimsysRegistryState {
+  const reg = new Registry();
+  return {
+    registry: reg,
+    httpRequestsTotal: new Counter({
+      name: guardName("simsys_http_requests_total"),
+      help: "Total HTTP requests handled, bucketed by status class.",
+      labelNames: ["service", "method", "route", "status"],
+      registers: [reg],
+    }),
+    httpRequestDurationSeconds: new Histogram({
+      name: guardName("simsys_http_request_duration_seconds"),
+      help: "HTTP request duration in seconds, labelled by route template.",
+      labelNames: ["service", "method", "route"],
+      registers: [reg],
+      buckets: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0],
+    }),
+    buildInfo: new Gauge({
+      name: guardName("simsys_build_info"),
+      help: "Service build information. Always equal to 1; read labels for actual data.",
+      labelNames: ["service", "version", "commit", "started_at"],
+      registers: [reg],
+    }),
+    queueDepth: new Gauge({
+      name: guardName("simsys_queue_depth"),
+      help: "Current depth of an application-owned queue.",
+      labelNames: ["service", "queue"],
+      registers: [reg],
+    }),
+    jobsTotal: new Counter({
+      name: guardName("simsys_jobs_total"),
+      help: "Jobs completed, labelled by name and outcome (success/error).",
+      labelNames: ["service", "job", "outcome"],
+      registers: [reg],
+    }),
+    jobDurationSeconds: new Histogram({
+      name: guardName("simsys_job_duration_seconds"),
+      help: "Job duration in seconds.",
+      labelNames: ["service", "job", "outcome"],
+      registers: [reg],
+      buckets: [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 300],
+    }),
+    progressProcessedTotal: new Counter({
+      name: guardName("simsys_progress_processed_total"),
+      help: "Items completed in a batch operation (monotonic counter).",
+      labelNames: ["service", "operation"],
+      registers: [reg],
+    }),
+    progressRemaining: new Gauge({
+      name: guardName("simsys_progress_remaining"),
+      help: "Items not yet completed in a batch operation.",
+      labelNames: ["service", "operation"],
+      registers: [reg],
+    }),
+    progressRatePerSecond: new Gauge({
+      name: guardName("simsys_progress_rate_per_second"),
+      help: "EWMA-smoothed processing rate in items per second.",
+      labelNames: ["service", "operation"],
+      registers: [reg],
+    }),
+    progressEstimatedCompletionTimestamp: new Gauge({
+      name: guardName("simsys_progress_estimated_completion_timestamp"),
+      help: "Estimated completion time as a Unix timestamp (0 when unknown).",
+      labelNames: ["service", "operation"],
+      registers: [reg],
+    }),
+    defaultMetricsRegistered: false,
+    warnedMissingService: new Set<string>(),
+  };
+}
+
+const _state: SimsysRegistryState = (globalThis.__simsysMetricsRegistryState ??=
+  initRegistryState());
+
+/**
+ * The simsys-owned Prometheus registry. We do NOT use prom-client's default
+ * global registry so consumer apps can host their own metrics side-by-side
+ * without collisions, and so tests can reset cleanly.
+ */
+export const registry: Registry = _state.registry;
 
 /**
  * Warn (don't error) when a custom metric's labelNames omit "service".
@@ -44,8 +151,8 @@ const warnedMissingService = new Set<string>();
  */
 function warnIfMissingService(name: string, labelNames: readonly string[]): void {
   if (labelNames.includes("service")) return;
-  if (warnedMissingService.has(name)) return;
-  warnedMissingService.add(name);
+  if (_state.warnedMissingService.has(name)) return;
+  _state.warnedMissingService.add(name);
   // eslint-disable-next-line no-console
   console.warn(
     `[simsys-metrics] metric "${name}" registered without 'service' in ` +
@@ -101,18 +208,8 @@ export function makeHistogram(
 
 // -------- HTTP metrics (baseline) --------
 
-export const httpRequestsTotal = makeCounter(
-  "simsys_http_requests_total",
-  "Total HTTP requests handled, bucketed by status class.",
-  ["service", "method", "route", "status"],
-);
-
-export const httpRequestDurationSeconds = makeHistogram(
-  "simsys_http_request_duration_seconds",
-  "HTTP request duration in seconds, labelled by route template.",
-  ["service", "method", "route"],
-  [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0],
-);
+export const httpRequestsTotal: Counter = _state.httpRequestsTotal;
+export const httpRequestDurationSeconds: Histogram = _state.httpRequestDurationSeconds;
 
 export function statusBucket(statusCode: number | string): string {
   const code = typeof statusCode === "number" ? statusCode : Number(statusCode);
@@ -148,62 +245,24 @@ export function normalizeMethod(method: unknown): string {
 
 // -------- Build info --------
 
-export const buildInfo = makeGauge(
-  "simsys_build_info",
-  "Service build information. Always equal to 1; read labels for actual data.",
-  ["service", "version", "commit", "started_at"],
-);
+export const buildInfo: Gauge = _state.buildInfo;
 
 // -------- Queue + job (opt-in) --------
 
-export const queueDepth = makeGauge(
-  "simsys_queue_depth",
-  "Current depth of an application-owned queue.",
-  ["service", "queue"],
-);
-
-export const jobsTotal = makeCounter(
-  "simsys_jobs_total",
-  "Jobs completed, labelled by name and outcome (success/error).",
-  ["service", "job", "outcome"],
-);
-
-export const jobDurationSeconds = makeHistogram(
-  "simsys_job_duration_seconds",
-  "Job duration in seconds.",
-  ["service", "job", "outcome"],
-  [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 300],
-);
+export const queueDepth: Gauge = _state.queueDepth;
+export const jobsTotal: Counter = _state.jobsTotal;
+export const jobDurationSeconds: Histogram = _state.jobDurationSeconds;
 
 // -------- Progress tracking (opt-in) --------
 
-export const progressProcessedTotal = makeCounter(
-  "simsys_progress_processed_total",
-  "Items completed in a batch operation (monotonic counter).",
-  ["service", "operation"],
-);
-
-export const progressRemaining = makeGauge(
-  "simsys_progress_remaining",
-  "Items not yet completed in a batch operation.",
-  ["service", "operation"],
-);
-
-export const progressRatePerSecond = makeGauge(
-  "simsys_progress_rate_per_second",
-  "EWMA-smoothed processing rate in items per second.",
-  ["service", "operation"],
-);
-
-export const progressEstimatedCompletionTimestamp = makeGauge(
-  "simsys_progress_estimated_completion_timestamp",
-  "Estimated completion time as a Unix timestamp (0 when unknown).",
-  ["service", "operation"],
-);
+export const progressProcessedTotal: Counter = _state.progressProcessedTotal;
+export const progressRemaining: Gauge = _state.progressRemaining;
+export const progressRatePerSecond: Gauge = _state.progressRatePerSecond;
+export const progressEstimatedCompletionTimestamp: Gauge =
+  _state.progressEstimatedCompletionTimestamp;
 
 // -------- Default runtime metrics (opt-in wrapper) --------
 
-let defaultMetricsRegistered = false;
 export function registerNodeDefaultMetrics(service: string): void {
   // Always refresh the default labels — `setDefaultLabels({service})`
   // governs the static `service` label on the prom-client default
@@ -214,12 +273,22 @@ export function registerNodeDefaultMetrics(service: string): void {
   // Refreshing on every call keeps the label consistent with the
   // adapter's current `service` identity.
   registry.setDefaultLabels({ service });
-  if (defaultMetricsRegistered) return;
-  defaultMetricsRegistered = true;
+  if (_state.defaultMetricsRegistered) return;
+  _state.defaultMetricsRegistered = true;
   // prom-client's default metrics cover GC, event loop lag, and heap details
   // with the `nodejs_` / `process_` prefixes. We register them to OUR registry
   // so they're served by the same /metrics endpoint. They won't carry the
   // `service` label but they're useful enough to include — the static label
   // applied via `registry.setDefaultLabels` above propagates to every sample.
   collectDefaultMetrics({ register: registry });
+}
+
+/**
+ * Test-only: clear the default-metrics-registered sentinel and the
+ * missing-service warning Set. Does NOT drop the metric instances or
+ * the registry itself — those are identity-stable singletons.
+ */
+export function _resetRegistryStateForTests(): void {
+  _state.defaultMetricsRegistered = false;
+  _state.warnedMissingService.clear();
 }

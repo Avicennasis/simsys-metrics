@@ -8,14 +8,57 @@
  * unmodified across every app.
  *
  * Matches `simsys_metrics._process` (Python).
+ *
+ * State (registered flag, current service, the four metric refs, the
+ * cumulative-CPU memo, and the per-collect mutex) lives on `globalThis`
+ * so bundler chunk-splitting can't give each chunk its own copy. See
+ * registry.ts header for the full rationale.
  */
 
 import { readdirSync } from "node:fs";
 import { Counter, Gauge } from "prom-client";
 import { registry } from "./registry.js";
 
-let registered = false;
-let service: string | null = null;
+interface SimsysProcessState {
+  registered: boolean;
+  service: string | null;
+  cpuTotal: Counter | null;
+  memoryBytes: Gauge | null;
+  openFds: Gauge | null;
+  uptimeSeconds: Gauge | null;
+  // Last observed cumulative CPU seconds — used to inc() the Counter by the
+  // delta on each collect() cycle, preserving monotonic counter semantics so
+  // rate() and reset-detection behave correctly.
+  //
+  // Updated atomically inside cpuCollectMutex below: prom-client's
+  // Registry.metrics() walks collectors via Promise.all with no per-registry
+  // mutex, so two concurrent scrapes (e.g. Prometheus + a sidecar push
+  // monitor) can race the read-and-update sequence. Without serialization,
+  // scrape A reads lastCpuSeconds=0, scrape B reads lastCpuSeconds=0, both
+  // compute the full delta-from-zero and inc by ~total_cpu — counter
+  // advances by 2× actual on every concurrent-scrape pair.
+  lastCpuSeconds: number;
+  // Globally-scoped serialization for the cpu collect() callback. Each new
+  // invocation chains onto the previous one; the read-update of
+  // lastCpuSeconds + the Counter.inc both run inside the chain.
+  cpuCollectMutex: Promise<void>;
+}
+
+declare global {
+  // eslint-disable-next-line no-var
+  var __simsysMetricsProcessState: SimsysProcessState | undefined;
+}
+
+const _state: SimsysProcessState = (globalThis.__simsysMetricsProcessState ??= {
+  registered: false,
+  service: null,
+  cpuTotal: null,
+  memoryBytes: null,
+  openFds: null,
+  uptimeSeconds: null,
+  lastCpuSeconds: 0,
+  cpuCollectMutex: Promise.resolve(),
+});
 
 /**
  * Snapshot of process-collector state immediately before
@@ -33,30 +76,6 @@ export type ProcessCollectorRollbackState =
   | { action: "registered" }
   | { action: "service-swap"; priorService: string };
 
-// We store these in module scope so they survive across collect() cycles.
-let cpuTotal: Counter | null = null;
-let memoryBytes: Gauge | null = null;
-let openFds: Gauge | null = null;
-let uptimeSeconds: Gauge | null = null;
-
-// Last observed cumulative CPU seconds — used to inc() the Counter by the
-// delta on each collect() cycle, preserving monotonic counter semantics so
-// rate() and reset-detection behave correctly.
-//
-// Updated atomically inside cpuCollectMutex below: prom-client's
-// Registry.metrics() walks collectors via Promise.all with no per-registry
-// mutex, so two concurrent scrapes (e.g. Prometheus + a sidecar push
-// monitor) can race the read-and-update sequence. Without serialization,
-// scrape A reads lastCpuSeconds=0, scrape B reads lastCpuSeconds=0, both
-// compute the full delta-from-zero and inc by ~total_cpu — counter
-// advances by 2× actual on every concurrent-scrape pair.
-let lastCpuSeconds = 0;
-
-// Module-scoped serialization for the cpu collect() callback. Each new
-// invocation chains onto the previous one; the read-update of
-// lastCpuSeconds + the Counter.inc both run inside the chain.
-let cpuCollectMutex: Promise<void> = Promise.resolve();
-
 function countOpenFds(): number {
   // Linux-only: /proc/self/fd lists one entry per open FD.
   if (process.platform !== "linux") return 0;
@@ -70,8 +89,8 @@ function countOpenFds(): number {
 export function registerProcessCollector(
   svc: string,
 ): ProcessCollectorRollbackState {
-  if (registered) {
-    if (service === svc) {
+  if (_state.registered) {
+    if (_state.service === svc) {
       return { action: "reused" };
     }
     // Re-install with a different service: refresh the static label so
@@ -88,21 +107,21 @@ export function registerProcessCollector(
     // collect() inc()s the new service's counter by a small delta from
     // the current cumulative, not by the full cumulative-from-zero
     // (which would create a one-scrape spike artifact).
-    const priorService = service ?? "";
-    service = svc;
-    cpuTotal?.remove({ service: priorService });
-    memoryBytes?.remove({ service: priorService, type: "rss" });
-    memoryBytes?.remove({ service: priorService, type: "heapUsed" });
-    memoryBytes?.remove({ service: priorService, type: "heapTotal" });
-    memoryBytes?.remove({ service: priorService, type: "external" });
-    openFds?.remove({ service: priorService });
-    uptimeSeconds?.remove({ service: priorService });
+    const priorService = _state.service ?? "";
+    _state.service = svc;
+    _state.cpuTotal?.remove({ service: priorService });
+    _state.memoryBytes?.remove({ service: priorService, type: "rss" });
+    _state.memoryBytes?.remove({ service: priorService, type: "heapUsed" });
+    _state.memoryBytes?.remove({ service: priorService, type: "heapTotal" });
+    _state.memoryBytes?.remove({ service: priorService, type: "external" });
+    _state.openFds?.remove({ service: priorService });
+    _state.uptimeSeconds?.remove({ service: priorService });
     return { action: "service-swap", priorService };
   }
-  service = svc;
-  registered = true;
+  _state.service = svc;
+  _state.registered = true;
 
-  cpuTotal = new Counter({
+  _state.cpuTotal = new Counter({
     name: "simsys_process_cpu_seconds_total",
     help: "Process CPU seconds (user + system) consumed since process start.",
     labelNames: ["service"],
@@ -117,51 +136,51 @@ export function registerProcessCollector(
       // Serialize via cpuCollectMutex so concurrent /metrics scrapes
       // can't both read the same lastCpuSeconds and double-count.
       const counter = this;
-      const next = cpuCollectMutex.then(() => {
+      const next = _state.cpuCollectMutex.then(() => {
         const { user, system } = process.cpuUsage();
         const total = (user + system) / 1_000_000;
-        const delta = Math.max(0, total - lastCpuSeconds);
-        lastCpuSeconds = total;
+        const delta = Math.max(0, total - _state.lastCpuSeconds);
+        _state.lastCpuSeconds = total;
         if (delta > 0) {
-          counter.inc({ service: service! }, delta);
+          counter.inc({ service: _state.service! }, delta);
         }
       });
-      cpuCollectMutex = next.catch(() => undefined); // swallow for the chain
+      _state.cpuCollectMutex = next.catch(() => undefined); // swallow for the chain
       await next;
     },
   });
 
-  memoryBytes = new Gauge({
+  _state.memoryBytes = new Gauge({
     name: "simsys_process_memory_bytes",
     help: "Process memory in bytes. type=rss is resident set; type=heapUsed is V8 heap used; type=heapTotal is V8 heap total.",
     labelNames: ["service", "type"],
     registers: [registry],
     collect() {
       const mem = process.memoryUsage();
-      this.set({ service: service!, type: "rss" }, mem.rss);
-      this.set({ service: service!, type: "heapUsed" }, mem.heapUsed);
-      this.set({ service: service!, type: "heapTotal" }, mem.heapTotal);
-      this.set({ service: service!, type: "external" }, mem.external);
+      this.set({ service: _state.service!, type: "rss" }, mem.rss);
+      this.set({ service: _state.service!, type: "heapUsed" }, mem.heapUsed);
+      this.set({ service: _state.service!, type: "heapTotal" }, mem.heapTotal);
+      this.set({ service: _state.service!, type: "external" }, mem.external);
     },
   });
 
-  openFds = new Gauge({
+  _state.openFds = new Gauge({
     name: "simsys_process_open_fds",
     help: "Open file descriptors for this process (Linux only; 0 elsewhere).",
     labelNames: ["service"],
     registers: [registry],
     collect() {
-      this.set({ service: service! }, countOpenFds());
+      this.set({ service: _state.service! }, countOpenFds());
     },
   });
 
-  uptimeSeconds = new Gauge({
+  _state.uptimeSeconds = new Gauge({
     name: "simsys_process_uptime_seconds",
     help: "Process uptime in seconds.",
     labelNames: ["service"],
     registers: [registry],
     collect() {
-      this.set({ service: service! }, process.uptime());
+      this.set({ service: _state.service! }, process.uptime());
     },
   });
 
@@ -198,16 +217,16 @@ export function restoreProcessCollector(
       // very first post-rollback inc() jump the counter by the full
       // process-cumulative CPU.
       {
-        const failedService = service ?? "";
-        service = state.priorService;
+        const failedService = _state.service ?? "";
+        _state.service = state.priorService;
         if (failedService && failedService !== state.priorService) {
-          cpuTotal?.remove({ service: failedService });
-          memoryBytes?.remove({ service: failedService, type: "rss" });
-          memoryBytes?.remove({ service: failedService, type: "heapUsed" });
-          memoryBytes?.remove({ service: failedService, type: "heapTotal" });
-          memoryBytes?.remove({ service: failedService, type: "external" });
-          openFds?.remove({ service: failedService });
-          uptimeSeconds?.remove({ service: failedService });
+          _state.cpuTotal?.remove({ service: failedService });
+          _state.memoryBytes?.remove({ service: failedService, type: "rss" });
+          _state.memoryBytes?.remove({ service: failedService, type: "heapUsed" });
+          _state.memoryBytes?.remove({ service: failedService, type: "heapTotal" });
+          _state.memoryBytes?.remove({ service: failedService, type: "external" });
+          _state.openFds?.remove({ service: failedService });
+          _state.uptimeSeconds?.remove({ service: failedService });
         }
       }
       return;
@@ -219,15 +238,15 @@ export function restoreProcessCollector(
 }
 
 function _unregisterAll(): void {
-  registered = false;
-  service = null;
-  lastCpuSeconds = 0;
-  cpuCollectMutex = Promise.resolve();
+  _state.registered = false;
+  _state.service = null;
+  _state.lastCpuSeconds = 0;
+  _state.cpuCollectMutex = Promise.resolve();
   registry.removeSingleMetric("simsys_process_cpu_seconds_total");
   registry.removeSingleMetric("simsys_process_memory_bytes");
   registry.removeSingleMetric("simsys_process_open_fds");
   registry.removeSingleMetric("simsys_process_uptime_seconds");
-  cpuTotal = memoryBytes = openFds = uptimeSeconds = null;
+  _state.cpuTotal = _state.memoryBytes = _state.openFds = _state.uptimeSeconds = null;
 }
 
 export function _resetForTests(): void {
