@@ -205,13 +205,21 @@ export const progressEstimatedCompletionTimestamp = makeGauge(
 
 let defaultMetricsRegistered = false;
 export function registerNodeDefaultMetrics(service: string): void {
+  // Always refresh the default labels — `setDefaultLabels({service})`
+  // governs the static `service` label on the prom-client default
+  // metrics (`nodejs_*`, `process_*`). On a service-swap (e.g. Next
+  // dev-mode hot-reload installs a different service into the same
+  // process, or any adapter is re-initialised), the prior service's
+  // label would otherwise persist on every default metric forever.
+  // Refreshing on every call keeps the label consistent with the
+  // adapter's current `service` identity.
+  registry.setDefaultLabels({ service });
   if (defaultMetricsRegistered) return;
   defaultMetricsRegistered = true;
   // prom-client's default metrics cover GC, event loop lag, and heap details
   // with the `nodejs_` / `process_` prefixes. We register them to OUR registry
   // so they're served by the same /metrics endpoint. They won't carry the
-  // `service` label but they're useful enough to include. A per-service static
-  // label is applied via `registry.setDefaultLabels`.
-  registry.setDefaultLabels({ service });
+  // `service` label but they're useful enough to include — the static label
+  // applied via `registry.setDefaultLabels` above propagates to every sample.
   collectDefaultMetrics({ register: registry });
 }

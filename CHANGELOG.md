@@ -5,6 +5,39 @@ All notable changes to `simsys-metrics` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] — 2026-04-26 — Node only
+
+Patch release to the Node package. Python + Go versions unchanged.
+
+### Fixed (Node)
+- **`@simsys/metrics` 0.4.1** — Six self-audit findings on top of
+  v0.4.0's Next.js adapter. Highlights:
+  - **F17 / F18** (HIGH) — hot-reload + sentinel-clear no longer
+    double-patches `http.Server.prototype.emit` (request counter
+    would double on the second install). Now caches the true
+    original emit in `globalThis.__simsysNextOrigEmit` and reuses
+    it across re-arm cycles.
+  - **F19** (HIGH) — `registerNodeDefaultMetrics` refreshes
+    `setDefaultLabels` on every call so default `process_*` /
+    `nodejs_*` metrics carry the new service label after a hot-
+    reload.
+  - **F20 / F21** (HIGH security) — `bucketRoute` cardinality is
+    now actually bounded against attacker URL shapes. Mixed-
+    alphanumeric / slug / percent-decoded-non-ASCII segments
+    collapse to `:str` (was: passed through verbatim, allowing
+    `/api/foo/abc1`, `/api/foo/abc2`, ... to spray unbounded
+    Prometheus time series). Percent-decoding before
+    classification ensures `/%41` and `/A` produce the same
+    label. `routeTemplates` still wins for legitimate dynamic
+    paths.
+  - **F24** (LOW) — `bucketRoute` paths > 8KB short-circuit to
+    `/__toolong__`.
+
+  See `node/CHANGELOG.md` for the full entry. Note: F20/F21 is a
+  label-format change for mixed-alphanumeric segments — Grafana
+  dashboards using raw slug labels need to update to `:str` or
+  use `routeTemplates` to preserve the prior label.
+
 ## [0.4.0] — 2026-04-26 — Node only
 
 Minor release to the Node package. Python + Go versions unchanged.

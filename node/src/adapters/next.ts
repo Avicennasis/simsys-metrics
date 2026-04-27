@@ -9,9 +9,15 @@
  * scrape endpoint, this gives the full Express-equivalent surface.
  *
  * Cardinality discipline: route labels go through bucketRoute() which
- * strips query strings, normalizes numeric segments to `:id`, UUIDs to
- * `:uuid`, and collapses anything > 5 segments to `/<a>/<b>/__deep__`.
- * Consumers can pass `routeTemplates` for high-fidelity overrides.
+ * strips query strings, percent-decodes segments, normalizes numeric
+ * segments to `:id`, UUIDs to `:uuid`, mixed-alphanumeric / slug /
+ * percent-decoded-non-ASCII segments to `:str`, and collapses anything
+ * > 5 segments to `/<a>/<b>/__deep__`. Paths > 8KB short-circuit to
+ * `/__toolong__`. Cardinality is bounded regardless of attacker URL
+ * shape — without `:str` collapse, an attacker spraying unique slugs
+ * would create one Prometheus time series per slug, exhausting
+ * Prometheus memory. Consumers can pass `routeTemplates` for
+ * high-fidelity overrides on legitimate dynamic paths.
  */
 
 import http from "node:http";
@@ -38,6 +44,14 @@ import {
 import { setService, _peekService } from "../baseline.js";
 
 export interface RouteTemplate {
+  /**
+   * Regex tested against every request URL on the hot path. Catastrophic-
+   * backtracking patterns (e.g. `^(a+)+$`, `^(.*)+$`) will block the
+   * event loop on attacker-shaped input — `RegExp.test()` is synchronous
+   * and there is no per-call timeout. Use linear-complexity regexes only;
+   * if you need permissive matching, anchor the pattern (`^/api/`) and
+   * avoid nested quantifiers.
+   */
   pattern: RegExp;
   template: string;
 }
@@ -56,14 +70,54 @@ const NUMERIC_RE = /^\d+$/;
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+// Static segments that stay verbatim when the surrounding path is
+// otherwise text — safe lower-case words, not user-controllable. This
+// is the allow-list approach: any unrecognised text segment collapses
+// to `:str` to bound cardinality. Adding common English path nouns
+// here avoids labelling every static API namespace as `:str:str/:str`.
+//
+// The regex matches segments that look like API namespaces or path
+// nouns: lowercase ASCII letters, hyphens, dots; <= 32 chars; no
+// digits, no uppercase, no other punctuation. Anything outside this
+// shape (mixed alphanumeric, base64, JWTs, slug IDs like
+// `ORD-9981`, percent-encoded bytes) collapses to `:str`. This bounds
+// cardinality regardless of attacker input shape: an attacker spraying
+// `/api/products/<n>` gets one label `/api/products/:str` instead of
+// one label per unique `<n>`.
+const SAFE_TEXT_SEGMENT_RE = /^[a-z][a-z.-]{0,31}$/;
+
+const MAX_PATH_LENGTH = 8192;
+
 /**
  * Pure function: turn a raw URL path into a bounded-cardinality route label.
  * Exported for testing + consumer introspection.
+ *
+ * Bucketing rules, in order:
+ *   1. Path > 8KB → `/__toolong__` (defensive cap; pathological URLs
+ *      shouldn't burn CPU traversing `split("/")`).
+ *   2. Empty or `/` → `/`.
+ *   3. Any `routeTemplates` whose `pattern.test(path)` returns true →
+ *      that template (consumer override).
+ *   4. > 5 segments → `/<a>/<b>/__deep__` (depth cap).
+ *   5. Per-segment normalization:
+ *        a. Numeric (`/^\d+$/`) → `:id`
+ *        b. UUID v4-shaped → `:uuid`
+ *        c. `..` / `.` → kept verbatim (defends against weird URL shapes)
+ *        d. "Safe" namespace tokens (lowercase ASCII <= 32 chars) → kept
+ *        e. Anything else (mixed alphanumeric, slug IDs, base64,
+ *           percent-encoded bytes, Unicode, …) → `:str`
+ *   6. Percent-encoded sequences are decoded BEFORE classification so
+ *      `%41` / `A` produce the same label.
  */
 export function bucketRoute(
   url: string,
   templates: readonly RouteTemplate[] = [],
 ): string {
+  // Defensive: cap pathological URL length before any work.
+  if (typeof url !== "string" || url.length > MAX_PATH_LENGTH) {
+    return "/__toolong__";
+  }
+
   // Strip query string + fragment.
   const qsIdx = url.indexOf("?");
   let path = qsIdx >= 0 ? url.slice(0, qsIdx) : url;
@@ -72,7 +126,9 @@ export function bucketRoute(
 
   if (path === "" || path === "/") return "/";
 
-  // Custom templates win over default bucketing.
+  // Custom templates win over default bucketing. Tested against the
+  // RAW (un-decoded) path so consumers can match on the same string
+  // their framework saw.
   for (const t of templates) {
     if (t.pattern.test(path)) return t.template;
   }
@@ -80,14 +136,30 @@ export function bucketRoute(
   // Split + normalize.
   const parts = path.split("/").slice(1);
   if (parts.length > 5) {
-    return `/${parts[0] ?? ""}/${parts[1] ?? ""}/__deep__`;
+    return `/${classifySegment(parts[0] ?? "")}/${classifySegment(parts[1] ?? "")}/__deep__`;
   }
-  const normalized = parts.map((p) => {
-    if (NUMERIC_RE.test(p)) return ":id";
-    if (UUID_RE.test(p)) return ":uuid";
-    return p;
-  });
+  const normalized = parts.map(classifySegment);
   return "/" + normalized.join("/");
+}
+
+function classifySegment(raw: string): string {
+  // Decode percent-encoding before classifying so /%41 == /A. A
+  // malformed sequence (e.g. lone `%`) throws — fall through to the
+  // raw segment in that case so we still produce SOME bucket.
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(raw);
+  } catch {
+    decoded = raw;
+  }
+  if (decoded === "") return "";
+  if (NUMERIC_RE.test(decoded)) return ":id";
+  if (UUID_RE.test(decoded)) return ":uuid";
+  // Allow `.` / `..` through verbatim — they're rare path tokens and
+  // bucketing them as `:str` would obscure attempts at traversal.
+  if (decoded === "." || decoded === "..") return decoded;
+  if (SAFE_TEXT_SEGMENT_RE.test(decoded)) return decoded;
+  return ":str";
 }
 
 declare global {
@@ -142,7 +214,22 @@ export function installNext(opts: NextInstallOpts): void {
   // Snapshot every piece of state install is about to mutate, so partial
   // failure rolls back cleanly. Mirrors Express adapter discipline.
   const preService = _peekService();
-  const origEmit = http.Server.prototype.emit;
+  // Resolve the TRUE original `emit` reference. On a fresh process,
+  // http.Server.prototype.emit IS the Node built-in. On a hot-reload
+  // (Next dev mode re-runs instrumentation.ts; the sentinel above
+  // guards repeated calls in the same module-load cycle, but a
+  // consumer may have explicitly cleared `__simsysNextInstalled` to
+  // re-arm), the live `emit` could already be OUR previous patch.
+  // Re-capturing it as origEmit and patching on top would stack two
+  // layers of patch — every request's `finalize` would run twice and
+  // double-count the counter (Codex F1 shape, but on http.Server).
+  //
+  // Defence: stash the true original on first install in
+  // `globalThis.__simsysNextOrigEmit` and reuse it on subsequent
+  // installs so the patch is always layered on the real Node built-in,
+  // never on our own prior patch.
+  const origEmit = (globalThis.__simsysNextOrigEmit ??
+    http.Server.prototype.emit) as typeof http.Server.prototype.emit;
   let buildInfoLabels: BuildInfoLabels | null = null;
   let buildInfoWasNew = false;
   let procCollectorState: ProcessCollectorRollbackState | null = null;
@@ -160,7 +247,7 @@ export function installNext(opts: NextInstallOpts): void {
     };
     ({ wasNew: buildInfoWasNew } = registerBuildInfo(buildInfoLabels));
 
-    http.Server.prototype.emit = function (
+    const patchedEmit = function (
       this: http.Server,
       event: string | symbol,
       ...args: unknown[]
@@ -218,11 +305,25 @@ export function installNext(opts: NextInstallOpts): void {
         http.Server["emit"]
       >);
     };
+    // Mark our patch closure so future installs / introspection can
+    // detect "is the live emit ours?" without relying on the sentinel
+    // (which a consumer can clear to force re-arm).
+    (patchedEmit as unknown as { __simsysNextEmitPatch: true }).__simsysNextEmitPatch = true;
+    http.Server.prototype.emit = patchedEmit;
     emitPatched = true;
 
     // Sentinels set LAST — only after every wiring step succeeded.
+    // Save the TRUE original emit on first install so subsequent
+    // installs (hot-reload + sentinel-clear) layer their patch on
+    // the real Node built-in, never on our prior patch. Only write
+    // it if it's not already set — preserves the original capture
+    // across multiple install/uninstall cycles.
     globalThis.__simsysNextInstalled = true;
-    globalThis.__simsysNextOrigEmit = origEmit as typeof globalThis.__simsysNextOrigEmit;
+    if (globalThis.__simsysNextOrigEmit === undefined) {
+      globalThis.__simsysNextOrigEmit = origEmit as unknown as NonNullable<
+        typeof globalThis.__simsysNextOrigEmit
+      >;
+    }
   } catch (err) {
     if (emitPatched) {
       try {

@@ -5,6 +5,98 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] — 2026-04-26 — Node only
+
+Patch release closing six self-audit findings on top of v0.4.0. Three
+parallel reviews (focused review of the new Next adapter, regression
+check that v0.3.10 fixes still hold, security/cardinality audit of
+`bucketRoute` against attacker-controlled URLs) found four HIGH issues
+introduced or exposed by v0.4.0 plus two MED issues. Python and Go are
+unaffected (no changes to those packages).
+
+### Fixed
+- **F17 — Hot-reload + sentinel-clear no longer double-patches
+  `http.Server.prototype.emit`** (HIGH). Pre-fix, when a consumer
+  cleared `globalThis.__simsysNextInstalled` to force a re-arm
+  without ALSO restoring `http.Server.prototype.emit`, the second
+  `installNext()` call captured the LIVE `emit` (which was our
+  prior patch) as `origEmit` and stacked a second patch on top.
+  Every request's `finalize` then ran twice, doubling
+  `simsys_http_requests_total`. Fix: cache the TRUE original emit
+  in `globalThis.__simsysNextOrigEmit` on first install and reuse
+  it on subsequent installs so the patch always layers on the Node
+  built-in, never on our own prior patch. The patch closure is
+  also marked with a `__simsysNextEmitPatch = true` property for
+  introspection.
+- **F18 — `globalThis.__simsysNextOrigEmit` is now wired up**
+  (HIGH). Pre-fix, the global was written but never read — dead
+  state on `globalThis`. The F17 fix above puts it to use as the
+  durable record of the true Node built-in `emit`.
+- **F19 — `registerNodeDefaultMetrics` now refreshes
+  `setDefaultLabels` on every call** (HIGH). Pre-fix, the
+  process-global `defaultMetricsRegistered` boolean short-
+  circuited on second-and-later calls, including the
+  `registry.setDefaultLabels({service})` call that controls the
+  static `service` label on prom-client default metrics
+  (`process_*`, `nodejs_*`). After a hot-reload to a new service
+  name, those default metrics kept the original service label
+  forever. Now `setDefaultLabels` is called every time;
+  `collectDefaultMetrics` is still gated by the boolean (registers
+  exactly once).
+- **F20 / F21 — `bucketRoute` cardinality and percent-encoding
+  hardening** (HIGH, security). Pre-fix, ANY non-numeric and
+  non-UUID segment was passed through verbatim. An attacker
+  spraying `/api/foo/abc1`, `/api/foo/abc2`, ... or
+  `/api/data/%41`, `/api/data/%42`, ... could create one
+  Prometheus time series per unique segment, exhausting Prometheus
+  memory. The README explicitly claimed cardinality was bounded;
+  it wasn't. Fix:
+  - Segments are percent-decoded BEFORE classification, so `/%41`
+    and `/A` produce the same label.
+  - Only segments matching the safe-text-segment shape (lowercase
+    ASCII, dot, hyphen, ≤ 32 chars, no digits) pass through
+    verbatim. Anything else (mixed alphanumeric, slug IDs like
+    `ORD-9981`, base64, JWTs, percent-encoded non-ASCII bytes,
+    Unicode) collapses to `:str`.
+  - `routeTemplates` still wins for high-fidelity overrides on
+    legitimate dynamic paths (e.g. usernames in
+    `/api/users/<u>/profile`).
+  - Residual: pure-lowercase slugs of typical word shape (e.g. an
+    attacker-controllable username field) still pass through —
+    consumers MUST use `routeTemplates` for those if they're
+    user-controlled. Documented in JSDoc.
+- **F22 — `RouteTemplate.pattern` ReDoS warning in JSDoc** (LOW).
+  Catastrophic-backtracking patterns block the event loop on the
+  hot path; consumers must avoid them. Documentation only.
+- **F24 — `bucketRoute` short-circuits paths > 8KB to
+  `/__toolong__`** (LOW). Defensive cap against pathological
+  input.
+
+### Changed
+- `bucketRoute(url, templates)` label format change. Mixed
+  alphanumeric / slug / percent-decoded-non-ASCII segments that
+  used to pass through verbatim now collapse to `:str`. Grafana
+  dashboards filtering on raw slug labels need to switch to
+  `:str` or use `routeTemplates` to preserve the prior label.
+  This is a meaningful security improvement (cardinality is now
+  bounded against attacker URL shapes), but it IS a label-format
+  change visible to dashboards, so it bumps the package patch
+  version with an explicit CHANGELOG note rather than being a
+  silent fix.
+- `installNext()` patch closure now carries a
+  `__simsysNextEmitPatch` marker property for introspection.
+- `registry.setDefaultLabels({service})` is now called on every
+  `registerNodeDefaultMetrics` invocation, not just the first.
+
+### Tests
+- 6 new vitest cases in
+  `tests/install-self-audit-v041.test.ts` (F17 hot-reload
+  double-patch, F19 default-labels refresh on swap, F20 slug
+  collapse, F21 percent-decode, F24 length cap, F20 backwards-
+  compat regression guard).
+- All 69 Node tests pass; tsc clean; `npm pack --dry-run` 43
+  files; `npm audit` 0 vulns; conformance smoke green.
+
 ## [0.4.0] — 2026-04-26
 
 Minor release: Next.js standalone adapter. Same simsys baseline + per-request
