@@ -49,6 +49,18 @@ export const EXEMPT_PATHS: ReadonlySet<string> = new Set([
   ...DEFAULT_HEALTH_PATHS,
 ]);
 
+// Strip trailing "/" characters without a regex. Avoids CodeQL's
+// polynomial-redos false positive on `/\/+$/` (the `+` quantifier is
+// linear here because `$` is anchored, but the static analyzer can't
+// always prove it).
+function stripTrailingSlashes(s: string): string {
+  let end = s.length;
+  while (end > 0 && s.charCodeAt(end - 1) === 47 /* "/" */) {
+    end--;
+  }
+  return end === s.length ? s : s.slice(0, end);
+}
+
 function buildExemptPaths(metricsPath: string): ReadonlySet<string> {
   return new Set([metricsPath, ...DEFAULT_HEALTH_PATHS]);
 }
@@ -79,7 +91,7 @@ export function installHono(app: HonoLike, opts: HonoInstallOpts): HonoLike {
       ((app as Record<string, unknown>)._basePath as string | undefined) ?? "";
     const newAbsoluteMetricsPath =
       honoBasePath && honoBasePath !== "/"
-        ? honoBasePath.replace(/\/+$/, "") + metricsPath
+        ? stripTrailingSlashes(honoBasePath) + metricsPath
         : metricsPath;
     if (
       appProps.simsysService !== service ||
@@ -140,7 +152,7 @@ export function installHono(app: HonoLike, opts: HonoInstallOpts): HonoLike {
       ((app as Record<string, unknown>)._basePath as string | undefined) ?? "";
     const absoluteMetricsPath =
       honoBasePath && honoBasePath !== "/"
-        ? honoBasePath.replace(/\/+$/, "") + metricsPath
+        ? stripTrailingSlashes(honoBasePath) + metricsPath
         : metricsPath;
     appProps.simsysMetricsPath = absoluteMetricsPath;
 
