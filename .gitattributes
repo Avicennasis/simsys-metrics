@@ -15,8 +15,12 @@
 *.gif binary
 *.ico binary
 
-# Exclude from git archive (GitHub release tarballs)
-.github/                 export-ignore
+# Exclude from git archive (GitHub release tarballs).
+#
+# We DO NOT export-ignore SECURITY.md or .github/ — OpenSSF Scorecard fetches
+# the repo via the GitHub source tarball endpoint, and any file marked
+# export-ignore is invisible to its checks. That made our SECURITY.md score 0
+# on Security-Policy even though the file exists and is correct.
 tests/                   export-ignore
 bin/                     export-ignore
 .gitattributes           export-ignore
@@ -26,4 +30,3 @@ bin/                     export-ignore
 CHANGELOG.md             export-ignore
 CONTRIBUTING.md          export-ignore
 CODE_OF_CONDUCT.md       export-ignore
-SECURITY.md              export-ignore
