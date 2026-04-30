@@ -45,7 +45,7 @@ The Node package ships as a tarball attached to each `node-v*` GitHub Release. P
 ```json
 {
   "dependencies": {
-    "@simsys/metrics": "https://github.com/Avicennasis/simsys-metrics/releases/download/node-v0.3.8/simsys-metrics-0.3.8.tgz"
+    "@simsys/metrics": "https://github.com/Simmons-Systems/simsys-metrics/releases/download/node-v0.4.3/simsys-metrics-0.4.3.tgz"
   }
 }
 ```
@@ -322,11 +322,11 @@ and build with `docker build --build-arg GIT_COMMIT=$(git rev-parse --short HEAD
 ## Development
 
 The Node package lives under `node/` in the unified
-[`simsys-metrics`](https://github.com/Avicennasis/simsys-metrics) monorepo
+[`simsys-metrics`](https://github.com/Simmons-Systems/simsys-metrics) monorepo
 (shared with the Python and Go siblings).
 
 ```bash
-git clone https://github.com/Avicennasis/simsys-metrics.git
+git clone https://github.com/Simmons-Systems/simsys-metrics.git
 cd simsys-metrics/node
 npm install
 
@@ -349,7 +349,7 @@ npm test         # vitest run
 
 ## See also
 
-- **Python sibling:** [`simsys-metrics`](https://github.com/Avicennasis/simsys-metrics) (FastAPI + Flask).
+- **Python sibling:** [`simsys-metrics`](https://github.com/Simmons-Systems/simsys-metrics) (FastAPI + Flask).
 - **Upstream dependency:** [`prom-client`](https://github.com/siimon/prom-client).
 - **Grafana dashboard template:** any dashboard that templates over the
   `service` label will work; build it from the metric catalogue above.

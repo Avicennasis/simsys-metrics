@@ -15,3 +15,6 @@ htmlcov/
 .DS_Store
 .idea/
 .vscode/
+
+# Internal infrastructure topology — gitignored to avoid leaking deployment details
+DeployedApps.md

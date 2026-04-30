@@ -14,6 +14,6 @@
 // `sum by (service) (rate(simsys_http_requests_total[5m]))` works
 // unmodified across every app.
 //
-// See https://github.com/Avicennasis/simsys-metrics for the full
+// See https://github.com/Simmons-Systems/simsys-metrics for the full
 // metric catalogue and cardinality rules.
 package simsysmetrics

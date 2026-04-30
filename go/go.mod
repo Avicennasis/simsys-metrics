@@ -1,4 +1,4 @@
-module github.com/Avicennasis/simsys-metrics/go
+module github.com/Simmons-Systems/simsys-metrics/go
 
 go 1.25.0
 

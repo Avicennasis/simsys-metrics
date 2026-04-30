@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "simsys-metrics"
-version = "0.3.10"
+version = "0.3.11"
 description = "Drop-in Prometheus /metrics template for FastAPI and Flask web apps. One install() call; consistent simsys_* metric catalogue; optional queue/job/progress helpers."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -47,9 +47,9 @@ test = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Avicennasis/simsys-metrics"
-Changelog = "https://github.com/Avicennasis/simsys-metrics/blob/main/CHANGELOG.md"
-Issues = "https://github.com/Avicennasis/simsys-metrics/issues"
+Homepage = "https://github.com/Simmons-Systems/simsys-metrics"
+Changelog = "https://github.com/Simmons-Systems/simsys-metrics/blob/main/CHANGELOG.md"
+Issues = "https://github.com/Simmons-Systems/simsys-metrics/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["simsys_metrics"]

@@ -19,7 +19,7 @@ welcome.
 ## Dev setup
 
 ```bash
-git clone https://github.com/Avicennasis/simsys-metrics.git
+git clone https://github.com/Simmons-Systems/simsys-metrics.git
 cd simsys-metrics
 python3 -m venv .venv && . .venv/bin/activate
 pip install -e '.[fastapi,flask,test]'

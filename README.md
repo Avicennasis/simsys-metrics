@@ -2,10 +2,10 @@
 
 > A drop-in Prometheus `/metrics` template for Python, Node.js, and Go web apps. One `install()` call; consistent metric catalogue; zero-per-app dashboard work.
 
-[![CI](https://github.com/Avicennasis/simsys-metrics/actions/workflows/test.yml/badge.svg)](https://github.com/Avicennasis/simsys-metrics/actions/workflows/test.yml)
-[![codecov](https://codecov.io/gh/Avicennasis/simsys-metrics/branch/main/graph/badge.svg)](https://codecov.io/gh/Avicennasis/simsys-metrics)
-[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/Avicennasis/simsys-metrics/badge)](https://scorecard.dev/viewer/?uri=github.com/Avicennasis/simsys-metrics)
-[![Release](https://img.shields.io/github/v/release/Avicennasis/simsys-metrics?display_name=tag)](https://github.com/Avicennasis/simsys-metrics/releases)
+[![CI](https://github.com/Simmons-Systems/simsys-metrics/actions/workflows/test.yml/badge.svg)](https://github.com/Simmons-Systems/simsys-metrics/actions/workflows/test.yml)
+[![codecov](https://codecov.io/gh/Simmons-Systems/simsys-metrics/branch/main/graph/badge.svg)](https://codecov.io/gh/Simmons-Systems/simsys-metrics)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/Simmons-Systems/simsys-metrics/badge)](https://scorecard.dev/viewer/?uri=github.com/Simmons-Systems/simsys-metrics)
+[![Release](https://img.shields.io/github/v/release/Simmons-Systems/simsys-metrics?display_name=tag)](https://github.com/Simmons-Systems/simsys-metrics/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-supported-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
@@ -66,10 +66,10 @@ up automatically.
 
 ```bash
 # FastAPI service
-pip install "simsys-metrics[fastapi] @ git+https://github.com/Avicennasis/simsys-metrics.git@v0.3.8"
+pip install "simsys-metrics[fastapi] @ git+https://github.com/Simmons-Systems/simsys-metrics.git@python-v0.3.11"
 
 # Flask service
-pip install "simsys-metrics[flask] @ git+https://github.com/Avicennasis/simsys-metrics.git@v0.3.8"
+pip install "simsys-metrics[flask] @ git+https://github.com/Simmons-Systems/simsys-metrics.git@python-v0.3.11"
 ```
 
 Pin to the tag. Bumping a consumer means re-pointing this URL at a newer tag.
@@ -78,7 +78,7 @@ Pin to the tag. Bumping a consumer means re-pointing this URL at a newer tag.
 <summary>Pinning in <code>requirements.txt</code></summary>
 
 ```
-simsys-metrics[fastapi] @ git+https://github.com/Avicennasis/simsys-metrics.git@v0.3.8
+simsys-metrics[fastapi] @ git+https://github.com/Simmons-Systems/simsys-metrics.git@python-v0.3.11
 ```
 
 Works in plain Docker builds — no SSH agent, no auth tokens required.
@@ -325,7 +325,7 @@ RUN mkdir -p /tmp/prometheus_multiproc
 ## Development
 
 ```bash
-git clone https://github.com/Avicennasis/simsys-metrics.git
+git clone https://github.com/Simmons-Systems/simsys-metrics.git
 cd simsys-metrics
 python3 -m venv .venv && . .venv/bin/activate
 pip install -e '.[fastapi,flask,test]'

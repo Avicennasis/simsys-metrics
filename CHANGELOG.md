@@ -5,6 +5,30 @@ All notable changes to `simsys-metrics` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 2026-04-29 — Repository transferred to `Simmons-Systems` org
+
+Coordinated migration release across all three languages. No functional
+changes; metadata-only.
+
+- **Python** — `python-v0.3.11`. Introduces the `python-vX.Y.Z` tag
+  convention (parallels `node-vX.Y.Z` and `go/vX.Y.Z`). Last unified
+  `vX.Y.Z` tag was `v0.3.10`; consumers can keep using legacy tags via
+  the redirect or migrate to the new convention.
+- **Node** — `node-v0.4.3`. Tarball URL points at new owner.
+- **Go** — `go/v0.2.11`. **Module path renamed**:
+  `github.com/Avicennasis/simsys-metrics/go` →
+  `github.com/Simmons-Systems/simsys-metrics/go`. Consumers must
+  update import paths AND `go.mod` `require` lines. The module path is
+  part of Go's public API; the rename is a hard break for any consumer
+  that doesn't update.
+- `pyproject.toml`, `node/package.json`, `go/go.mod`, `go/doc.go`, all
+  three `README.md` files, badges, and install snippets now reference
+  `Simmons-Systems`.
+- `CODEOWNERS` left as `@Avicennasis` — handle is still valid.
+- Repository transferred via GitHub native Transfer Ownership; the
+  `Avicennasis/simsys-metrics` URL redirects indefinitely (until/unless
+  someone re-creates the old name).
+
 ## [0.4.1] — 2026-04-26 — Node only
 
 Patch release to the Node package. Python + Go versions unchanged.
@@ -545,12 +569,12 @@ First public release.
 - pre-commit with ruff (lint + format).
 - OpenSSF Scorecard, build provenance attestation on Go releases.
 
-[0.3.8]: https://github.com/Avicennasis/simsys-metrics/releases/tag/v0.3.8
-[0.3.7]: https://github.com/Avicennasis/simsys-metrics/releases/tag/v0.3.7
-[0.3.6]: https://github.com/Avicennasis/simsys-metrics/releases/tag/v0.3.6
-[0.3.5]: https://github.com/Avicennasis/simsys-metrics/releases/tag/v0.3.5
-[0.3.4]: https://github.com/Avicennasis/simsys-metrics/releases/tag/v0.3.4
-[0.3.3]: https://github.com/Avicennasis/simsys-metrics/releases/tag/v0.3.3
-[0.3.2]: https://github.com/Avicennasis/simsys-metrics/releases/tag/v0.3.2
-[0.3.1]: https://github.com/Avicennasis/simsys-metrics/releases/tag/v0.3.1
-[0.3.0]: https://github.com/Avicennasis/simsys-metrics/releases/tag/v0.3.0
+[0.3.8]: https://github.com/Simmons-Systems/simsys-metrics/releases/tag/v0.3.8
+[0.3.7]: https://github.com/Simmons-Systems/simsys-metrics/releases/tag/v0.3.7
+[0.3.6]: https://github.com/Simmons-Systems/simsys-metrics/releases/tag/v0.3.6
+[0.3.5]: https://github.com/Simmons-Systems/simsys-metrics/releases/tag/v0.3.5
+[0.3.4]: https://github.com/Simmons-Systems/simsys-metrics/releases/tag/v0.3.4
+[0.3.3]: https://github.com/Simmons-Systems/simsys-metrics/releases/tag/v0.3.3
+[0.3.2]: https://github.com/Simmons-Systems/simsys-metrics/releases/tag/v0.3.2
+[0.3.1]: https://github.com/Simmons-Systems/simsys-metrics/releases/tag/v0.3.1
+[0.3.0]: https://github.com/Simmons-Systems/simsys-metrics/releases/tag/v0.3.0

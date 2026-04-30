@@ -5,6 +5,22 @@ All notable changes to `simsys-metrics-go` will be documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [go/v0.2.11] — 2026-04-29
+
+### Changed (BREAKING)
+
+- **Module path renamed**:
+  `github.com/Avicennasis/simsys-metrics/go` →
+  `github.com/Simmons-Systems/simsys-metrics/go`. Repository
+  transferred to the `Simmons-Systems` GitHub org. Consumers must
+  update `import` statements AND `go.mod` `require` lines. Run
+  `go mod tidy` to refresh `go.sum`.
+- The `go/v0.2.0` … `go/v0.2.10` tags resolve via the GitHub redirect
+  but their `go.mod` files contain the old `Avicennasis` module path,
+  which Go's verifier rejects against the new import path. Pin to
+  `go/v0.2.11` or later.
+- No functional code changes — metadata-only.
+
 ## [go/v0.2.8] — 2026-04-25
 
 ### Fixed
@@ -158,12 +174,12 @@ notes:
 - `TrackQueue` panic recovery: a `depthFn` panic logs the first occurrence
   via `slog` and silently absorbs subsequent panics to avoid log floods.
 
-[go/v0.2.8]: https://github.com/Avicennasis/simsys-metrics/releases/tag/go/v0.2.8
-[go/v0.2.7]: https://github.com/Avicennasis/simsys-metrics/releases/tag/go/v0.2.7
-[go/v0.2.6]: https://github.com/Avicennasis/simsys-metrics/releases/tag/go/v0.2.6
-[go/v0.2.5]: https://github.com/Avicennasis/simsys-metrics/releases/tag/go/v0.2.5
-[go/v0.2.4]: https://github.com/Avicennasis/simsys-metrics/releases/tag/go/v0.2.4
-[go/v0.2.3]: https://github.com/Avicennasis/simsys-metrics/releases/tag/go/v0.2.3
-[go/v0.2.2]: https://github.com/Avicennasis/simsys-metrics/releases/tag/go/v0.2.2
-[go/v0.2.1]: https://github.com/Avicennasis/simsys-metrics/releases/tag/go/v0.2.1
-[go/v0.2.0]: https://github.com/Avicennasis/simsys-metrics/releases/tag/go/v0.2.0
+[go/v0.2.8]: https://github.com/Simmons-Systems/simsys-metrics/releases/tag/go/v0.2.8
+[go/v0.2.7]: https://github.com/Simmons-Systems/simsys-metrics/releases/tag/go/v0.2.7
+[go/v0.2.6]: https://github.com/Simmons-Systems/simsys-metrics/releases/tag/go/v0.2.6
+[go/v0.2.5]: https://github.com/Simmons-Systems/simsys-metrics/releases/tag/go/v0.2.5
+[go/v0.2.4]: https://github.com/Simmons-Systems/simsys-metrics/releases/tag/go/v0.2.4
+[go/v0.2.3]: https://github.com/Simmons-Systems/simsys-metrics/releases/tag/go/v0.2.3
+[go/v0.2.2]: https://github.com/Simmons-Systems/simsys-metrics/releases/tag/go/v0.2.2
+[go/v0.2.1]: https://github.com/Simmons-Systems/simsys-metrics/releases/tag/go/v0.2.1
+[go/v0.2.0]: https://github.com/Simmons-Systems/simsys-metrics/releases/tag/go/v0.2.0
